@@ -10,12 +10,12 @@
   <div class="container">
     <header>
       <h1>🎵 Chord Sheet Maker</h1>
-      <p>Create, convert, and print chord charts</p>
+      <p>Jazz-style fake book chart generator</p>
     </header>
 
     <section class="panel">
-      <h2>Editor</h2>
-      <textarea id="chordEditor" placeholder="Enter or paste chord sheet format here..."></textarea>
+      <h2>ChordPro Editor</h2>
+      <textarea id="chordEditor" placeholder="Enter ChordPro here..."></textarea>
       <div class="buttons">
         <button onclick="generatePDF()">📄 Generate PDF</button>
         <button onclick="clearEditor()">🗑️ Clear</button>
@@ -23,17 +23,9 @@
     </section>
 
     <section class="panel">
-      <h2>ChordPro/Text Converter</h2>
-      <textarea id="rawInput" placeholder="Paste ChordPro or tab format here..."></textarea>
-      <div class="buttons">
-        <button onclick="convertToChordSheet()">🔁 Convert to Chord Sheet Format</button>
-      </div>
-    </section>
-
-    <section class="panel">
       <h2>Preview</h2>
       <div id="preview" class="preview-box">
-        <p>Live preview appears here...</p>
+        <p>Fake book chart will appear here...</p>
       </div>
     </section>
   </div>
