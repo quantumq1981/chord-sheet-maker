@@ -4,7 +4,40 @@ const preview = document.getElementById('preview');
 chordEditor.addEventListener('input', updatePreview);
 
 function updatePreview() {
-  preview.textContent = chordEditor.value;
+  const input = chordEditor.value;
+  const lines = input.split('\n');
+  let html = '';
+
+  for (let line of lines) {
+    line = line.trim();
+
+    if (line.startsWith('{title:') || line.startsWith('{artist:') || line.startsWith('{key:')) continue;
+
+    if (line.startsWith('{start_of_')) {
+      const name = line.match(/{start_of_(\w+)}/)[1];
+      html += `<div class="section-title">${name.toUpperCase()}</div>`;
+      continue;
+    }
+
+    if (line.startsWith('{end_of_')) continue;
+
+    if (line.startsWith('|')) {
+      const chords = line
+        .replace(/\|/g, '')
+        .split(' ')
+        .filter(c => c.trim() !== '')
+        .map(chord => `<div class="bar">${chord.trim()}</div>`)
+        .join('');
+      html += `<div class="bar-row">${chords}</div>`;
+      continue;
+    }
+
+    if (line !== '') {
+      html += `<div class="lyric-line">${line}</div>`;
+    }
+  }
+
+  preview.innerHTML = html;
 }
 
 function clearEditor() {
@@ -12,79 +45,47 @@ function clearEditor() {
   updatePreview();
 }
 
-function convertToChordSheet() {
-  const raw = document.getElementById("rawInput").value;
-  const lines = raw.split('\n');
-  let output = '';
-
-  let titleSet = false, artistSet = false, keySet = false;
-  let currentSection = '';
-  let inSection = false;
-
-  for (let line of lines) {
-    line = line.trim();
-
-    if (line.startsWith('{title:')) {
-      titleSet = true;
-      output += line + '\n';
-      continue;
-    }
-    if (line.startsWith('{artist:')) {
-      artistSet = true;
-      output += line + '\n';
-      continue;
-    }
-    if (line.startsWith('{key:')) {
-      keySet = true;
-      output += line + '\n\n';
-      continue;
-    }
-
-    const sectionMatch = line.match(/^\[?(Verse|Chorus|Bridge|Intro|Outro|Pre-Chorus)[\s\d]*\]?$/i);
-    if (sectionMatch) {
-      if (inSection) output += `{end_of_${currentSection.toLowerCase()}}\n\n`;
-      currentSection = sectionMatch[1];
-      output += `{start_of_${currentSection.toLowerCase()}}\n`;
-      inSection = true;
-      continue;
-    }
-
-    if (/^[|A-G#bmajdimaug0-9\s%\/()+\-\.]+$/.test(line)) {
-      output += '| ' + line.replace(/\s+/g, ' ').trim() + ' |\n';
-    } else {
-      output += line + '\n';
-    }
-  }
-
-  if (inSection) output += `{end_of_${currentSection.toLowerCase()}}\n`;
-
-  if (!titleSet) output = `{title: Untitled Song}\n` + output;
-  if (!artistSet) output = `{artist: Unknown}\n` + output;
-  if (!keySet) output = `{key: C}\n\n` + output;
-
-  chordEditor.value = output;
-  updatePreview();
-}
-
 function generatePDF() {
-  const content = chordEditor.value.replace(/\n/g, '<br/>');
+  const printWindow = window.open('', '_blank');
+  const content = preview.innerHTML;
 
-  const win = window.open('', '_blank');
-  win.document.write(`
+  printWindow.document.write(`
+    <!DOCTYPE html>
     <html>
     <head>
-      <title>Chord Sheet PDF</title>
+      <title>Chord Sheet</title>
       <style>
-        body { font-family: 'Times New Roman', serif; padding: 40px; }
-        .bar { border: 1px solid #000; padding: 10px; margin: 5px 0; }
+        body {
+          font-family: 'Times New Roman', serif;
+          padding: 40px;
+        }
+        .section-title {
+          font-weight: bold;
+          margin: 20px 0 10px;
+          text-transform: uppercase;
+          border-bottom: 2px solid #000;
+          font-size: 16px;
+        }
+        .bar-row {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 10px;
+          flex-wrap: wrap;
+        }
+        .bar {
+          border: 2px solid #000;
+          padding: 12px 18px;
+          min-width: 70px;
+          text-align: center;
+          font-weight: bold;
+          font-family: 'Courier New', monospace;
+        }
       </style>
     </head>
-    <body>
-      <h1>Chord Sheet</h1>
-      <pre>${content}</pre>
-    </body>
+    <body>${content}</body>
     </html>
   `);
-  win.document.close();
-  win.print();
+
+  printWindow.document.close();
+  printWindow.print();
 }
