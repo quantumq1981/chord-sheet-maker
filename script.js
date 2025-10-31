@@ -1,14 +1,14 @@
 function renderChart() {
   const input = document.getElementById('input').value;
   const output = document.getElementById('output');
-  const lines = input.split('\\n');
+  const lines = input.split('\n');
 
   let rendered = '';
   lines.forEach((line) => {
     line = line.trim();
 
     if (!line) {
-      rendered += '\\n';
+      rendered += '\n';
       return;
     }
 
@@ -17,13 +17,13 @@ function renderChart() {
     }
 
     if (line.startsWith('{section:')) {
-      const section = line.match(/{section:\\s*(.+?)}/i)?.[1] || '';
-      rendered += `\\n\\n<span class="section-title">${section}</span>\\n`;
+      const section = line.match(/{section:\s*(.+?)}/i)?.[1] || '';
+      rendered += `\n\n<span class="section-title">${section}</span>\n`;
       return;
     }
 
     // Leave chord lines as-is
-    rendered += line + '\\n';
+    rendered += line + '\n';
   });
 
   output.innerHTML = rendered;
@@ -32,7 +32,7 @@ function renderChart() {
 function printChart() {
   const content = document.getElementById('output').innerHTML;
   const win = window.open('', '', 'height=800,width=800');
-  win.document.write(\`
+  win.document.write(`
     <html>
     <head>
       <title>Chord Chart</title>
@@ -41,9 +41,9 @@ function printChart() {
         .section-title { font-weight: bold; margin-top: 20px; text-transform: uppercase; border-bottom: 1px solid #000; }
       </style>
     </head>
-    <body>\${content}</body>
+    <body>${content}</body>
     </html>
-  \`);
+  `);
   win.document.close();
   win.print();
 }
