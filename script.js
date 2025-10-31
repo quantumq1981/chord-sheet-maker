@@ -1,91 +1,58 @@
-const chordEditor = document.getElementById('chordEditor');
-const preview = document.getElementById('preview');
-
-chordEditor.addEventListener('input', updatePreview);
-
-function updatePreview() {
-  const input = chordEditor.value;
+function renderChart() {
+  const input = document.getElementById('chordInput').value;
   const lines = input.split('\n');
-  let html = '';
+  const output = document.getElementById('chartOutput');
+  output.innerHTML = '';
 
-  for (let line of lines) {
+  lines.forEach((line) => {
     line = line.trim();
 
-    if (line.startsWith('{title:') || line.startsWith('{artist:') || line.startsWith('{key:')) continue;
+    if (line === '') return;
 
-    if (line.startsWith('{start_of_')) {
-      const name = line.match(/{start_of_(\w+)}/)[1];
-      html += `<div class="section-title">${name.toUpperCase()}</div>`;
-      continue;
+    // Section headers
+    if (line.startsWith('{section:')) {
+      const title = line.match(/{section:\s*(.+?)}/i)?.[1] || '';
+      output.innerHTML += `<div class="section-title">${title.toUpperCase()}</div>`;
+      return;
     }
 
-    if (line.startsWith('{end_of_')) continue;
+    if (line.startsWith('{title:') || line.startsWith('{artist:') || line.startsWith('{key:')) {
+      return; // Ignore metadata for now
+    }
 
     if (line.startsWith('|')) {
-      const chords = line
-        .replace(/\|/g, '')
-        .split(' ')
-        .filter(c => c.trim() !== '')
-        .map(chord => `<div class="bar">${chord.trim()}</div>`)
+      const bars = line
+        .split('|')
+        .map((bar) => bar.trim())
+        .filter((bar) => bar !== '')
+        .map((bar) => `<div class="bar">${bar}</div>`)
         .join('');
-      html += `<div class="bar-row">${chords}</div>`;
-      continue;
+      output.innerHTML += `<div class="bar-line">${bars}</div>`;
     }
-
-    if (line !== '') {
-      html += `<div class="lyric-line">${line}</div>`;
-    }
-  }
-
-  preview.innerHTML = html;
+  });
 }
 
-function clearEditor() {
-  chordEditor.value = '';
-  updatePreview();
+function clearInput() {
+  document.getElementById('chordInput').value = '';
+  document.getElementById('chartOutput').innerHTML = '';
 }
 
-function generatePDF() {
-  const printWindow = window.open('', '_blank');
-  const content = preview.innerHTML;
-
-  printWindow.document.write(`
-    <!DOCTYPE html>
+function downloadPDF() {
+  const win = window.open('', '', 'height=800,width=800');
+  const style = `
+    <style>
+      body { font-family: 'Courier New'; padding: 40px; }
+      .bar-line { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+      .bar { flex: 1 1 22%; border: 2px solid black; padding: 12px; text-align: center; font-size: 16px; }
+      .section-title { font-weight: bold; font-size: 16px; text-transform: uppercase; margin: 20px 0 10px; border-bottom: 2px solid #000; }
+    </style>
+  `;
+  win.document.write(`
     <html>
-    <head>
-      <title>Chord Sheet</title>
-      <style>
-        body {
-          font-family: 'Times New Roman', serif;
-          padding: 40px;
-        }
-        .section-title {
-          font-weight: bold;
-          margin: 20px 0 10px;
-          text-transform: uppercase;
-          border-bottom: 2px solid #000;
-          font-size: 16px;
-        }
-        .bar-row {
-          display: flex;
-          gap: 6px;
-          margin-bottom: 10px;
-          flex-wrap: wrap;
-        }
-        .bar {
-          border: 2px solid #000;
-          padding: 12px 18px;
-          min-width: 70px;
-          text-align: center;
-          font-weight: bold;
-          font-family: 'Courier New', monospace;
-        }
-      </style>
-    </head>
-    <body>${content}</body>
+    <head><title>Chord Chart PDF</title>${style}</head>
+    <body>${document.getElementById('chartOutput').innerHTML}</body>
     </html>
   `);
-
-  printWindow.document.close();
-  printWindow.print();
+  win.document.close();
+  win.print();
 }
