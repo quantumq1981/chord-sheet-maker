@@ -1,1 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chord Sheet Maker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎵 Chord Sheet Maker</h1>
+      <p>Create, convert, and print chord charts</p>
+    </header>
 
+    <section class="panel">
+      <h2>Editor</h2>
+      <textarea id="chordEditor" placeholder="Enter or paste chord sheet format here..."></textarea>
+      <div class="buttons">
+        <button onclick="generatePDF()">📄 Generate PDF</button>
+        <button onclick="clearEditor()">🗑️ Clear</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>ChordPro/Text Converter</h2>
+      <textarea id="rawInput" placeholder="Paste ChordPro or tab format here..."></textarea>
+      <div class="buttons">
+        <button onclick="convertToChordSheet()">🔁 Convert to Chord Sheet Format</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Preview</h2>
+      <div id="preview" class="preview-box">
+        <p>Live preview appears here...</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
