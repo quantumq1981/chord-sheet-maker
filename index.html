@@ -1,25 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chord Sheet Maker - Fakebook Style</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chord Sheet Maker</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="container">
-    <h1>🎼 Chord Sheet Maker</h1>
-    <p>Convert ChordPro to Real Book-style charts</p>
+    <h1>🎼 Chord Sheet Maker (Real Book Style)</h1>
 
-    <textarea id="chordInput" placeholder="Paste your chord sheet here..."></textarea>
-    
+    <textarea id="input" placeholder="Paste ChordPro-style text here..."></textarea>
+
     <div class="buttons">
-      <button onclick="renderChart()">📋 Render</button>
-      <button onclick="downloadPDF()">📄 Export PDF</button>
-      <button onclick="clearInput()">🗑️ Clear</button>
+      <button onclick="renderChart()">Render</button>
+      <button onclick="printChart()">Print / Export PDF</button>
+      <button onclick="clearInput()">Clear</button>
     </div>
 
-    <div id="chartOutput" class="chart-output"></div>
+    <div id="output" class="output-area"></div>
   </div>
 
   <script src="script.js"></script>
