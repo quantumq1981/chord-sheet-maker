@@ -1,33 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Chord Sheet Maker</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chord Sheet Maker - Fakebook Style</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>🎵 Chord Sheet Maker</h1>
-      <p>Jazz-style fake book chart generator</p>
-    </header>
+    <h1>🎼 Chord Sheet Maker</h1>
+    <p>Convert ChordPro to Real Book-style charts</p>
 
-    <section class="panel">
-      <h2>ChordPro Editor</h2>
-      <textarea id="chordEditor" placeholder="Enter ChordPro here..."></textarea>
-      <div class="buttons">
-        <button onclick="generatePDF()">📄 Generate PDF</button>
-        <button onclick="clearEditor()">🗑️ Clear</button>
-      </div>
-    </section>
+    <textarea id="chordInput" placeholder="Paste your chord sheet here..."></textarea>
+    
+    <div class="buttons">
+      <button onclick="renderChart()">📋 Render</button>
+      <button onclick="downloadPDF()">📄 Export PDF</button>
+      <button onclick="clearInput()">🗑️ Clear</button>
+    </div>
 
-    <section class="panel">
-      <h2>Preview</h2>
-      <div id="preview" class="preview-box">
-        <p>Fake book chart will appear here...</p>
-      </div>
-    </section>
+    <div id="chartOutput" class="chart-output"></div>
   </div>
 
   <script src="script.js"></script>
