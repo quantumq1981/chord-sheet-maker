@@ -269,6 +269,8 @@ select:disabled {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   font-size: 0.84rem;
+  white-space: pre;
+  overflow: auto;
 }
 
 .warning-block {

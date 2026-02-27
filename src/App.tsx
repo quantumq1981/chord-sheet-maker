@@ -1167,6 +1167,8 @@ export default function App() {
             className="chordpro-output"
             value={chordProText}
             placeholder="Generated ChordPro will appear here..."
+            wrap="off"
+            spellCheck={false}
             readOnly
           />
 
