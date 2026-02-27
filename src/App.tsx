@@ -261,6 +261,7 @@ export default function App() {
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(null);
   const [pdfPageSize, setPdfPageSize] = useState<PdfPageSize>('letter');
   const [isDragging, setIsDragging] = useState(false);
+  const [renderedPageCount, setRenderedPageCount] = useState(0);
 
   const parsedXml = useMemo(() => {
     if (!xmlText) {
@@ -321,6 +322,7 @@ export default function App() {
         if (container) {
           container.innerHTML = '';
         }
+        setRenderedPageCount(0);
         return;
       }
 
@@ -329,9 +331,11 @@ export default function App() {
         await osmd.load(xmlText);
         osmd.Zoom = zoom;
         osmd.render();
+        setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setRenderError(message);
+        setRenderedPageCount(0);
       }
     };
 
@@ -344,6 +348,7 @@ export default function App() {
     setRenderError('');
     setExportFeedback(null);
     setZoom(1);
+    setRenderedPageCount(0);
     const container = containerRef.current;
     if (container) {
       container.innerHTML = '';
@@ -505,12 +510,21 @@ export default function App() {
     }
   }, [baseName, showExportError, showExportSuccess]);
 
-  const exportPdf = useCallback(async () => {
+  const exportPdf = useCallback(async (maxPages?: number) => {
     const svgs = getRenderedSvgs(containerRef.current);
     if (svgs.length === 0) {
       showExportError('No rendered score found. Render the file before exporting PDF.');
       return;
     }
+
+    const popup = window.open('', '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      showExportError('Popup blocked. Allow popups and try again.');
+      return;
+    }
+    popup.document.title = 'Generating PDF…';
+    popup.document.body.innerHTML =
+      '<p style="font-family:sans-serif;padding:16px">Generating PDF…</p>';
 
     const isLetter = pdfPageSize === 'letter';
     const unit = isLetter ? 'in' : 'mm';
@@ -519,10 +533,11 @@ export default function App() {
 
     try {
       const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+      const pagesToExport = typeof maxPages === 'number' ? svgs.slice(0, maxPages) : svgs;
 
-      for (let index = 0; index < svgs.length; index += 1) {
-        const canvas = await svgToCanvas(svgs[index], 3);
-        const imageData = canvas.toDataURL('image/png');
+      for (let index = 0; index < pagesToExport.length; index += 1) {
+        const canvas = await svgToCanvas(pagesToExport[index], 1.5);
+        const jpegData = canvas.toDataURL('image/jpeg', 0.92);
 
         if (index > 0) {
           pdf.addPage(format, 'portrait');
@@ -532,20 +547,30 @@ export default function App() {
         const pageHeight = pdf.internal.pageSize.getHeight();
         const availableWidth = pageWidth - margin * 2;
         const availableHeight = pageHeight - margin * 2;
-        const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
-        const renderWidth = canvas.width * scale;
-        const renderHeight = canvas.height * scale;
-        const x = (pageWidth - renderWidth) / 2;
-        const y = (pageHeight - renderHeight) / 2;
+        const imgAspect = canvas.width / canvas.height;
+        let w = availableWidth;
+        let h = w / imgAspect;
+        if (h > availableHeight) {
+          h = availableHeight;
+          w = h * imgAspect;
+        }
+        const x = (pageWidth - w) / 2;
+        const y = (pageHeight - h) / 2;
 
-        pdf.addImage(imageData, 'PNG', x, y, renderWidth, renderHeight);
+        pdf.addImage(jpegData, 'JPEG', x, y, w, h, undefined, 'FAST');
       }
 
       const blob = pdf.output('blob');
-      triggerBlobDownload(blob, `${baseName}.pdf`, true);
-      showExportSuccess(`Exported PDF (${svgs.length} page${svgs.length > 1 ? 's' : ''}).`);
+      const url = URL.createObjectURL(blob);
+      popup.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      showExportSuccess(
+        `Exported PDF (${pagesToExport.length} page${pagesToExport.length > 1 ? 's' : ''}).`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      popup.document.title = 'PDF export failed';
+      popup.document.body.innerHTML = `<p style="font-family:sans-serif;padding:16px;color:#b00020">PDF export failed: ${message}</p>`;
       showExportError(`PDF export failed: ${message}`);
     }
   }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
@@ -680,6 +705,11 @@ export default function App() {
             <button type="button" onClick={() => void exportPdf()} disabled={!canExportInputs}>
               Export PDF
             </button>
+            {renderedPageCount > 6 && (
+              <button type="button" onClick={() => void exportPdf(1)} disabled={!canExportInputs}>
+                Export PDF (First Page)
+              </button>
+            )}
           </div>
 
           {exportFeedback && (
