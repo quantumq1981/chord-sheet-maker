@@ -3,6 +3,9 @@ import JSZip from 'jszip';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 
 type Diagnostics = {
+  isValidXml: boolean;
+  isMusicXml: boolean;
+  parseError?: string;
   rootName: string;
   version: string;
   parts: number;
@@ -21,23 +24,81 @@ function hasAcceptedExtension(name: string): boolean {
   return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
-function parseDiagnostics(xmlText: string): Diagnostics {
+const EMPTY_DIAGNOSTICS: Diagnostics = {
+  isValidXml: false,
+  isMusicXml: false,
+  parseError: undefined,
+  rootName: 'invalid',
+  version: 'n/a',
+  parts: 0,
+  measures: 0,
+  notes: 0,
+  harmonies: 0,
+  hasKey: false,
+  hasTime: false,
+  hasDivisions: false,
+};
+
+function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics: Diagnostics } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, 'application/xml');
+
+  const parserErrorNode =
+    doc.querySelector('parsererror') ?? doc.getElementsByTagName('parsererror').item(0);
+
+  if (parserErrorNode) {
+    const errorText = parserErrorNode.textContent?.trim();
+    const snippet = errorText ? errorText.slice(0, 300) : 'Invalid XML';
+    return {
+      doc,
+      diagnostics: {
+        ...EMPTY_DIAGNOSTICS,
+        parseError: snippet,
+      },
+    };
+  }
+
   const root = doc.documentElement;
+  const rootName = root?.nodeName ?? 'unknown';
+  const isMusicXml = rootName === 'score-partwise' || rootName === 'score-timewise';
+
+  if (!isMusicXml) {
+    return {
+      doc,
+      diagnostics: {
+        isValidXml: true,
+        isMusicXml: false,
+        rootName,
+        version: 'n/a',
+        parts: 0,
+        measures: 0,
+        notes: 0,
+        harmonies: 0,
+        hasKey: false,
+        hasTime: false,
+        hasDivisions: false,
+      },
+    };
+  }
 
   const queryCount = (selector: string) => doc.querySelectorAll(selector).length;
 
   return {
-    rootName: root?.nodeName ?? 'unknown',
-    version: root?.getAttribute('version') ?? 'n/a',
-    parts: queryCount('part'),
-    measures: queryCount('measure'),
-    notes: queryCount('note'),
-    harmonies: queryCount('harmony'),
-    hasKey: doc.querySelector('attributes > key') !== null,
-    hasTime: doc.querySelector('attributes > time') !== null,
-    hasDivisions: doc.querySelector('attributes > divisions') !== null,
+    doc,
+    diagnostics: {
+      isValidXml: true,
+      isMusicXml: true,
+      parseError: undefined,
+      rootName,
+      version: root?.getAttribute('version') ?? 'n/a',
+      parts: queryCount('part'),
+      measures: queryCount('measure'),
+      notes: queryCount('note'),
+      harmonies: queryCount('harmony'),
+      hasKey: doc.querySelector('attributes > key') !== null,
+      hasTime: doc.querySelector('attributes > time') !== null,
+      hasDivisions: doc.querySelector('attributes > divisions') !== null,
+    },
   };
 }
 
@@ -85,17 +146,26 @@ export default function App() {
   const [renderError, setRenderError] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
 
-  const diagnostics = useMemo(() => {
+  const parsedXml = useMemo(() => {
     if (!xmlText) {
       return null;
     }
-    return parseDiagnostics(xmlText);
+    return parseXmlWithDiagnostics(xmlText);
   }, [xmlText]);
+
+  const diagnostics = parsedXml?.diagnostics ?? null;
 
   const warnings = useMemo(() => {
     if (!diagnostics) {
       return [] as string[];
     }
+    if (!diagnostics.isValidXml) {
+      return ['Invalid MusicXML/XML (parse error).'];
+    }
+    if (!diagnostics.isMusicXml) {
+      return ['XML is valid but not MusicXML.'];
+    }
+
     const list: string[] = [];
     if (diagnostics.harmonies === 0) {
       list.push('No chord symbols (<harmony>) found — showing notation only.');
@@ -130,6 +200,14 @@ export default function App() {
         return;
       }
 
+      if (!diagnostics?.isValidXml || !diagnostics.isMusicXml) {
+        const container = containerRef.current;
+        if (container) {
+          container.innerHTML = '';
+        }
+        return;
+      }
+
       try {
         setRenderError('');
         await osmd.load(xmlText);
@@ -142,7 +220,7 @@ export default function App() {
     };
 
     void render();
-  }, [xmlText, zoom]);
+  }, [xmlText, zoom, diagnostics]);
 
   const clearAll = useCallback(() => {
     setFilename('');
@@ -243,6 +321,9 @@ export default function App() {
         </button>
       </header>
 
+      {xmlText && diagnostics && !diagnostics.isValidXml && (
+        <div className="error-banner">XML parse error: {diagnostics.parseError ?? 'Invalid XML'}</div>
+      )}
       {renderError && <div className="error-banner">Render error: {renderError}</div>}
 
       <main className="content-grid">
@@ -272,6 +353,11 @@ export default function App() {
               <li>
                 <strong>Version:</strong> {diagnostics.version}
               </li>
+              {!diagnostics.isValidXml && diagnostics.parseError && (
+                <li>
+                  <strong>Parse error:</strong> {diagnostics.parseError}
+                </li>
+              )}
               <li>
                 <strong>Parts:</strong> {diagnostics.parts}
               </li>
