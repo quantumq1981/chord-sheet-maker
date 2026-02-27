@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import {
   convertMusicXmlToChordPro,
+  extractMusicXmlTextFromFile,
   getDefaultConvertOptions,
   type ChordBracketStyle,
   type ChordProFormatMode,
@@ -26,16 +26,14 @@ type Diagnostics = {
   hasDivisions: boolean;
 };
 
-const ACCEPTED_EXTENSIONS = ['.xml', '.musicxml', '.mxl'];
 const FILE_INPUT_ACCEPT = [
-  ...ACCEPTED_EXTENSIONS,
-  '.XML',
-  '.MusicXML',
-  '.MXL',
+  '.xml',
+  '.musicxml',
+  '.mxl',
+  'application/vnd.recordare.musicxml+xml',
   'application/xml',
   'text/xml',
-  'application/vnd.recordare.musicxml+xml',
-  'application/vnd.recordare.musicxml',
+  'application/zip',
 ].join(',');
 
 type PdfPageSize = 'letter' | 'a4';
@@ -270,9 +268,14 @@ async function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Bl
   });
 }
 
-function hasAcceptedExtension(name: string): boolean {
-  const normalizedName = name.trim().toLowerCase();
-  return ACCEPTED_EXTENSIONS.some((ext) => normalizedName.endsWith(ext));
+function isSupportedMusicXmlFile(file: File): boolean {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.mxl')) return true;
+  if (name.endsWith('.musicxml')) return true;
+  if (name.endsWith('.xml')) return true;
+
+  const type = (file.type || '').toLowerCase();
+  return type.includes('xml') || type.includes('zip') || type.includes('musicxml');
 }
 
 function buildChordProOptionsFromUI(uiState: ChordProUiState) {
@@ -393,41 +396,6 @@ function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics:
       hasDivisions: doc.querySelector('attributes > divisions') !== null,
     },
   };
-}
-
-async function readXmlFromMxl(file: File): Promise<string> {
-  const data = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(data);
-  const candidates = Object.values(zip.files).filter((entry) => {
-    const filename = entry.name.toLowerCase();
-    return !entry.dir && (filename.endsWith('.xml') || filename.endsWith('.musicxml'));
-  });
-
-  if (candidates.length === 0) {
-    throw new Error('No embedded MusicXML file found in .mxl archive.');
-  }
-
-  let largest = candidates[0];
-  let largestSize = 0;
-
-  for (const candidate of candidates) {
-    const buffer = await candidate.async('uint8array');
-    if (buffer.byteLength > largestSize) {
-      largestSize = buffer.byteLength;
-      largest = candidate;
-    }
-  }
-
-  return largest.async('text');
-}
-
-async function readInputFile(file: File): Promise<string> {
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith('.mxl')) {
-    return readXmlFromMxl(file);
-  }
-
-  return file.text();
 }
 
 export default function App() {
@@ -565,17 +533,17 @@ export default function App() {
   }, []);
 
   const loadFile = useCallback(async (file: File) => {
-    if (!hasAcceptedExtension(file.name)) {
-      setRenderError('Unsupported file type. Use .xml, .musicxml, or .mxl');
+    if (!isSupportedMusicXmlFile(file)) {
+      setRenderError('Unsupported file type. Upload .xml, .musicxml, or .mxl.');
       return;
     }
 
     try {
-      const text = await readInputFile(file);
+      const { filename, xmlText, isMxl: loadedFromMxl } = await extractMusicXmlTextFromFile(file);
       didAutoFitRef.current = false;
-      setLoadedFilename(file.name);
-      setLoadedXmlText(text);
-      setIsMxl(file.name.toLowerCase().endsWith('.mxl'));
+      setLoadedFilename(filename);
+      setLoadedXmlText(xmlText);
+      setIsMxl(loadedFromMxl);
       setRenderError('');
       setExportFeedback(null);
       setChordProText('');
