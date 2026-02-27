@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import JSZip from 'jszip';
+import { jsPDF } from 'jspdf';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 
 type Diagnostics = {
@@ -18,6 +19,119 @@ type Diagnostics = {
 };
 
 const ACCEPTED_EXTENSIONS = ['.xml', '.musicxml', '.mxl'];
+
+type PdfPageSize = 'letter' | 'a4';
+
+type ExportFeedback = {
+  type: 'success' | 'error';
+  message: string;
+};
+
+const IOS_USER_AGENT = /iPad|iPhone|iPod/;
+
+function getBaseFilename(name: string): string {
+  const cleaned = name.trim();
+  if (!cleaned) {
+    return 'score';
+  }
+
+  const parts = cleaned.split('.');
+  if (parts.length === 1) {
+    return cleaned;
+  }
+  parts.pop();
+  return parts.join('.') || 'score';
+}
+
+function getRenderedSvgs(container: HTMLDivElement | null): SVGSVGElement[] {
+  if (!container) {
+    return [];
+  }
+  return Array.from(container.querySelectorAll('svg'));
+}
+
+function isIOSBrowser(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+  return IOS_USER_AGENT.test(navigator.userAgent);
+}
+
+function triggerBlobDownload(blob: Blob, filename: string, iOSFallbackToTab = false): void {
+  const url = URL.createObjectURL(blob);
+  if (iOSFallbackToTab && isIOSBrowser()) {
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      throw new Error('Popup blocked. Please allow popups and try export again.');
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return;
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 15_000);
+}
+
+function serializeSvg(svg: SVGSVGElement): string {
+  return new XMLSerializer().serializeToString(svg);
+}
+
+async function svgToCanvas(svg: SVGSVGElement, scale: number): Promise<HTMLCanvasElement> {
+  const serialized = serializeSvg(svg);
+  const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
+  const svgUrl = URL.createObjectURL(svgBlob);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to decode rendered SVG image.'));
+      img.src = svgUrl;
+    });
+
+    const svgWidth = svg.viewBox.baseVal?.width || svg.clientWidth || image.naturalWidth;
+    const svgHeight = svg.viewBox.baseVal?.height || svg.clientHeight || image.naturalHeight;
+
+    if (svgWidth <= 0 || svgHeight <= 0) {
+      throw new Error('Rendered score has invalid dimensions.');
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(svgWidth * scale));
+    canvas.height = Math.max(1, Math.round(svgHeight * scale));
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Canvas context is unavailable in this browser.');
+    }
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(svgUrl);
+  }
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error(`Failed to create ${type} blob.`));
+        return;
+      }
+      resolve(blob);
+    }, type);
+  });
+}
 
 function hasAcceptedExtension(name: string): boolean {
   const lower = name.toLowerCase();
@@ -144,6 +258,8 @@ export default function App() {
   const [xmlText, setXmlText] = useState<string>('');
   const [zoom, setZoom] = useState<number>(1);
   const [renderError, setRenderError] = useState<string>('');
+  const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(null);
+  const [pdfPageSize, setPdfPageSize] = useState<PdfPageSize>('letter');
   const [isDragging, setIsDragging] = useState(false);
 
   const parsedXml = useMemo(() => {
@@ -226,6 +342,7 @@ export default function App() {
     setFilename('');
     setXmlText('');
     setRenderError('');
+    setExportFeedback(null);
     setZoom(1);
     const container = containerRef.current;
     if (container) {
@@ -244,6 +361,7 @@ export default function App() {
       setFilename(file.name);
       setXmlText(text);
       setRenderError('');
+      setExportFeedback(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setRenderError(`Failed to read file: ${message}`);
@@ -298,6 +416,139 @@ export default function App() {
     const fallback = containerWidth > 1200 ? 1.3 : containerWidth > 900 ? 1.15 : 1;
     setZoom(fallback);
   }, [zoom]);
+
+  const showExportError = useCallback((message: string) => {
+    setExportFeedback({ type: 'error', message });
+  }, []);
+
+  const showExportSuccess = useCallback((message: string) => {
+    setExportFeedback({ type: 'success', message });
+  }, []);
+
+  const canExportInputs = Boolean(xmlText);
+  const baseName = getBaseFilename(filename);
+
+  const downloadXml = useCallback(() => {
+    if (!xmlText) {
+      showExportError('Load a file before downloading XML.');
+      return;
+    }
+
+    try {
+      const blob = new Blob([xmlText], { type: 'application/xml;charset=utf-8' });
+      triggerBlobDownload(blob, `${baseName}.xml`);
+      showExportSuccess('Downloaded XML.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`XML download failed: ${message}`);
+    }
+  }, [baseName, showExportError, showExportSuccess, xmlText]);
+
+  const downloadDiagnostics = useCallback(() => {
+    if (!xmlText) {
+      showExportError('Load a file before downloading diagnostics.');
+      return;
+    }
+
+    try {
+      const payload = {
+        filename: filename || `${baseName}.xml`,
+        diagnostics,
+        warnings,
+        renderError: renderError || null,
+        timestamp: new Date().toISOString(),
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+      triggerBlobDownload(blob, `${baseName}.diagnostics.json`);
+      showExportSuccess('Downloaded diagnostics JSON.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`Diagnostics export failed: ${message}`);
+    }
+  }, [baseName, diagnostics, filename, renderError, showExportError, showExportSuccess, warnings, xmlText]);
+
+  const exportSvg = useCallback(() => {
+    const svg = getRenderedSvgs(containerRef.current)[0];
+    if (!svg) {
+      showExportError('No rendered score found. Render the file before exporting SVG.');
+      return;
+    }
+
+    try {
+      const blob = new Blob([serializeSvg(svg)], { type: 'image/svg+xml;charset=utf-8' });
+      triggerBlobDownload(blob, `${baseName}.page1.svg`);
+      showExportSuccess('Exported first SVG page.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`SVG export failed: ${message}`);
+    }
+  }, [baseName, showExportError, showExportSuccess]);
+
+  const exportPng = useCallback(async () => {
+    const svg = getRenderedSvgs(containerRef.current)[0];
+    if (!svg) {
+      showExportError('No rendered score found. Render the file before exporting PNG.');
+      return;
+    }
+
+    try {
+      const canvas = await svgToCanvas(svg, 2);
+      const blob = await canvasToBlob(canvas, 'image/png');
+      triggerBlobDownload(blob, `${baseName}.png`, true);
+      showExportSuccess('Exported first page as PNG.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`PNG export failed: ${message}`);
+    }
+  }, [baseName, showExportError, showExportSuccess]);
+
+  const exportPdf = useCallback(async () => {
+    const svgs = getRenderedSvgs(containerRef.current);
+    if (svgs.length === 0) {
+      showExportError('No rendered score found. Render the file before exporting PDF.');
+      return;
+    }
+
+    const isLetter = pdfPageSize === 'letter';
+    const unit = isLetter ? 'in' : 'mm';
+    const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
+    const margin = isLetter ? 0.5 : 12;
+
+    try {
+      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+
+      for (let index = 0; index < svgs.length; index += 1) {
+        const canvas = await svgToCanvas(svgs[index], 3);
+        const imageData = canvas.toDataURL('image/png');
+
+        if (index > 0) {
+          pdf.addPage(format, 'portrait');
+        }
+
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const availableWidth = pageWidth - margin * 2;
+        const availableHeight = pageHeight - margin * 2;
+        const scale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
+        const renderWidth = canvas.width * scale;
+        const renderHeight = canvas.height * scale;
+        const x = (pageWidth - renderWidth) / 2;
+        const y = (pageHeight - renderHeight) / 2;
+
+        pdf.addImage(imageData, 'PNG', x, y, renderWidth, renderHeight);
+      }
+
+      const blob = pdf.output('blob');
+      triggerBlobDownload(blob, `${baseName}.pdf`, true);
+      showExportSuccess(`Exported PDF (${svgs.length} page${svgs.length > 1 ? 's' : ''}).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`PDF export failed: ${message}`);
+    }
+  }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
 
   return (
     <div className="app-shell">
@@ -397,6 +648,42 @@ export default function App() {
             )
           ) : (
             <p>Load a file to view warnings.</p>
+          )}
+
+          <h2>Export</h2>
+          <label className="export-label" htmlFor="pdf-page-size">
+            PDF Page Size
+          </label>
+          <select
+            id="pdf-page-size"
+            value={pdfPageSize}
+            onChange={(event) => setPdfPageSize(event.target.value as PdfPageSize)}
+            disabled={!canExportInputs}
+          >
+            <option value="letter">Letter (Portrait)</option>
+            <option value="a4">A4 (Portrait)</option>
+          </select>
+
+          <div className="export-actions">
+            <button type="button" onClick={downloadXml} disabled={!canExportInputs}>
+              Download XML
+            </button>
+            <button type="button" onClick={downloadDiagnostics} disabled={!canExportInputs}>
+              Download Diagnostics JSON
+            </button>
+            <button type="button" onClick={exportSvg} disabled={!canExportInputs}>
+              Export SVG (first page)
+            </button>
+            <button type="button" onClick={() => void exportPng()} disabled={!canExportInputs}>
+              Export PNG (first page)
+            </button>
+            <button type="button" onClick={() => void exportPdf()} disabled={!canExportInputs}>
+              Export PDF
+            </button>
+          </div>
+
+          {exportFeedback && (
+            <p className={`export-feedback ${exportFeedback.type}`}>{exportFeedback.message}</p>
           )}
         </aside>
       </main>
