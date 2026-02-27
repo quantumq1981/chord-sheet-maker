@@ -362,6 +362,7 @@ async function readInputFile(file: File): Promise<string> {
 export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
+  const didAutoFitRef = useRef(false);
   const [filename, setFilename] = useState<string>('');
   const [xmlText, setXmlText] = useState<string>('');
   const [zoom, setZoom] = useState<number>(1);
@@ -442,6 +443,12 @@ export default function App() {
         osmd.Zoom = zoom;
         osmd.render();
         setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
+        if (!didAutoFitRef.current) {
+          didAutoFitRef.current = true;
+          requestAnimationFrame(() => {
+            fitWidth();
+          });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setRenderError(message);
@@ -480,6 +487,7 @@ export default function App() {
 
     try {
       const text = await readInputFile(file);
+      didAutoFitRef.current = false;
       setFilename(file.name);
       setXmlText(text);
       setRenderError('');
@@ -530,14 +538,16 @@ export default function App() {
     const containerWidth = container.clientWidth;
 
     if (firstPage && firstPage.offsetWidth > 0) {
-      const target = (containerWidth / firstPage.offsetWidth) * zoom;
+      const currentZoom = osmd.Zoom;
+      const ratio = containerWidth / firstPage.offsetWidth;
+      const target = currentZoom * ratio;
       setZoom(Math.max(0.4, Math.min(2.5, Number(target.toFixed(2)))));
       return;
     }
 
-    const fallback = containerWidth > 1200 ? 1.3 : containerWidth > 900 ? 1.15 : 1;
+    const fallback = containerWidth < 600 ? 0.6 : containerWidth < 900 ? 0.8 : 1.0;
     setZoom(fallback);
-  }, [zoom]);
+  }, []);
 
   const showExportError = useCallback((message: string) => {
     setExportFeedback({ type: 'error', message });
