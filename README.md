@@ -2,6 +2,12 @@
 
 A Vite + React + TypeScript app for rendering MusicXML (`.xml`, `.musicxml`) and compressed MusicXML (`.mxl`) directly in the browser using OpenSheetMusicDisplay.
 
+## Supported uploads
+
+- `.xml` (MusicXML text)
+- `.musicxml` (MusicXML text)
+- `.mxl` (compressed MusicXML container)
+
 ## Development
 
 ```bash
