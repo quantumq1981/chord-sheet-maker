@@ -31,6 +31,26 @@ PDF export scales each page to fit available printable area while preserving asp
 
 For iOS Safari, exports use a best-effort fallback by opening the generated blob URL in a new tab when direct download behavior is restricted.
 
+
+## ChordPro Export
+
+After loading MusicXML/MXL, use **ChordPro Export** in the side panel to generate and export ChordPro from the same in-memory XML used for rendering.
+
+Supported options:
+- 4 bars per line by default (configurable)
+- Mode: Auto, Lyrics Inline, or Grid Only
+- Chord bracket style: Separate (`[C][G7]`) or Combined (`[C G7]`)
+- Repeat strategy: None or Simple Unroll (MVP)
+
+Actions:
+- Generate ChordPro
+- Copy to clipboard
+- Download `.pro`
+- Share (best effort on browsers that support `navigator.share`, including iOS Safari)
+
+Limitations:
+- Complex repeats/endings are not fully expanded; simple unroll is best-effort.
+
 ## GitHub Pages deployment
 
 This repo is configured to deploy via GitHub Actions.
