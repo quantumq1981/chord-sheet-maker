@@ -534,7 +534,7 @@ function renderGrid(
 
     for (const harmony of harmonies) {
       const slotIndexRaw = measure.durationDivisions > 0
-        ? Math.floor((harmony.offsetDivisions / measure.durationDivisions) * slotsPerMeasure)
+        ? Math.floor((harmony.offsetDivisions / Math.max(1, measure.durationDivisions)) * slotsPerMeasure)
         : 0;
       const slotIndex = Math.max(0, Math.min(slotsPerMeasure - 1, slotIndexRaw));
       if (slots[slotIndex] !== ".") {
@@ -554,7 +554,7 @@ function renderGrid(
   }
   if (totalCollisions > 0) {
     warnings.push(
-      `Some measures contain multiple chord changes within the same grid slot (${totalCollisions} collisions). Consider higher slot resolution.`
+      `Chord collisions within same slot: ${totalCollisions}. Consider higher grid resolution.`
     );
   }
 
