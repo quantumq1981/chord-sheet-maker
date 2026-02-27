@@ -2,6 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
+import {
+  convertMusicXmlToChordPro,
+  getDefaultConvertOptions,
+  type ChordBracketStyle,
+  type ChordProFormatMode,
+  type ConverterDiagnostics,
+  type RepeatStrategy,
+} from './converters/musicXMLtochordpro';
 
 type Diagnostics = {
   isValidXml: boolean;
@@ -27,6 +35,17 @@ type PrintPageSize = PdfPageSize;
 type ExportFeedback = {
   type: 'success' | 'error';
   message: string;
+};
+
+type ChordProModeUi = 'auto' | 'lyrics-inline' | 'grid-only';
+type ChordProBracketUi = 'separate' | 'combined';
+type ChordProRepeatUi = 'none' | 'simple-unroll';
+
+type ChordProUiState = {
+  barsPerLine: number;
+  mode: ChordProModeUi;
+  chordBracketStyle: ChordProBracketUi;
+  repeatStrategy: ChordProRepeatUi;
 };
 
 const IOS_USER_AGENT = /iPad|iPhone|iPod/;
@@ -246,6 +265,48 @@ function hasAcceptedExtension(name: string): boolean {
   return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
+function buildChordProOptionsFromUI(uiState: ChordProUiState) {
+  const defaultOptions = getDefaultConvertOptions();
+  const formatModeMap: Record<ChordProModeUi, ChordProFormatMode> = {
+    auto: 'auto',
+    'lyrics-inline': 'lyrics-inline',
+    'grid-only': 'grid-only',
+  };
+  const bracketStyleMap: Record<ChordProBracketUi, ChordBracketStyle> = {
+    separate: 'separate',
+    combined: 'combined',
+  };
+  const repeatMap: Record<ChordProRepeatUi, RepeatStrategy> = {
+    none: 'none',
+    'simple-unroll': 'simple-unroll',
+  };
+
+  return {
+    ...defaultOptions,
+    barsPerLine: uiState.barsPerLine,
+    formatMode: formatModeMap[uiState.mode],
+    chordBracketStyle: bracketStyleMap[uiState.chordBracketStyle],
+    repeatStrategy: repeatMap[uiState.repeatStrategy],
+    barlineStyle: 'pipes' as const,
+    wrapPolicy: 'bars-per-line' as const,
+  };
+}
+
+function deriveProFilename(loadedFilename: string): string {
+  const trimmed = loadedFilename.trim();
+  if (!trimmed) {
+    return 'song.pro';
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower.endsWith('.musicxml')) {
+    return `${trimmed.slice(0, -'.musicxml'.length)}.pro`;
+  }
+  if (lower.endsWith('.xml') || lower.endsWith('.mxl')) {
+    return `${trimmed.slice(0, -4)}.pro`;
+  }
+  return 'song.pro';
+}
+
 const EMPTY_DIAGNOSTICS: Diagnostics = {
   isValidXml: false,
   isMusicXml: false,
@@ -363,8 +424,9 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const didAutoFitRef = useRef(false);
-  const [filename, setFilename] = useState<string>('');
-  const [xmlText, setXmlText] = useState<string>('');
+  const [loadedFilename, setLoadedFilename] = useState<string>('');
+  const [loadedXmlText, setLoadedXmlText] = useState<string>('');
+  const [isMxl, setIsMxl] = useState(false);
   const [zoom, setZoom] = useState<number>(1);
   const [renderError, setRenderError] = useState<string>('');
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(null);
@@ -373,13 +435,22 @@ export default function App() {
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [pdfFilename, setPdfFilename] = useState<string>('score.pdf');
+  const [chordProUi, setChordProUi] = useState<ChordProUiState>({
+    barsPerLine: 4,
+    mode: 'auto',
+    chordBracketStyle: 'separate',
+    repeatStrategy: 'none',
+  });
+  const [chordProText, setChordProText] = useState('');
+  const [chordProWarnings, setChordProWarnings] = useState<string[]>([]);
+  const [chordProDiagnostics, setChordProDiagnostics] = useState<ConverterDiagnostics | null>(null);
 
   const parsedXml = useMemo(() => {
-    if (!xmlText) {
+    if (!loadedXmlText) {
       return null;
     }
-    return parseXmlWithDiagnostics(xmlText);
-  }, [xmlText]);
+    return parseXmlWithDiagnostics(loadedXmlText);
+  }, [loadedXmlText]);
 
   const diagnostics = parsedXml?.diagnostics ?? null;
 
@@ -424,7 +495,7 @@ export default function App() {
   useEffect(() => {
     const render = async () => {
       const osmd = osmdRef.current;
-      if (!osmd || !xmlText) {
+      if (!osmd || !loadedXmlText) {
         return;
       }
 
@@ -439,7 +510,7 @@ export default function App() {
 
       try {
         setRenderError('');
-        await osmd.load(xmlText);
+        await osmd.load(loadedXmlText);
         osmd.Zoom = zoom;
         osmd.render();
         setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
@@ -457,7 +528,7 @@ export default function App() {
     };
 
     void render();
-  }, [xmlText, zoom, diagnostics]);
+  }, [loadedXmlText, zoom, diagnostics]);
 
   const clearAll = useCallback(() => {
     setPdfBlobUrl((previousUrl) => {
@@ -467,10 +538,14 @@ export default function App() {
       return null;
     });
     setPdfFilename('score.pdf');
-    setFilename('');
-    setXmlText('');
+    setLoadedFilename('');
+    setLoadedXmlText('');
+    setIsMxl(false);
     setRenderError('');
     setExportFeedback(null);
+    setChordProText('');
+    setChordProWarnings([]);
+    setChordProDiagnostics(null);
     setZoom(1);
     setRenderedPageCount(0);
     const container = containerRef.current;
@@ -488,10 +563,14 @@ export default function App() {
     try {
       const text = await readInputFile(file);
       didAutoFitRef.current = false;
-      setFilename(file.name);
-      setXmlText(text);
+      setLoadedFilename(file.name);
+      setLoadedXmlText(text);
+      setIsMxl(file.name.toLowerCase().endsWith('.mxl'));
       setRenderError('');
       setExportFeedback(null);
+      setChordProText('');
+      setChordProWarnings([]);
+      setChordProDiagnostics(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setRenderError(`Failed to read file: ${message}`);
@@ -575,34 +654,34 @@ export default function App() {
     };
   }, [pdfBlobUrl]);
 
-  const canExportInputs = Boolean(xmlText);
-  const baseName = getBaseFilename(filename);
+  const canExportInputs = Boolean(loadedXmlText);
+  const baseName = getBaseFilename(loadedFilename);
 
   const downloadXml = useCallback(() => {
-    if (!xmlText) {
+    if (!loadedXmlText) {
       showExportError('Load a file before downloading XML.');
       return;
     }
 
     try {
-      const blob = new Blob([xmlText], { type: 'application/xml;charset=utf-8' });
+      const blob = new Blob([loadedXmlText], { type: 'application/xml;charset=utf-8' });
       triggerBlobDownload(blob, `${baseName}.xml`);
       showExportSuccess('Downloaded XML.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showExportError(`XML download failed: ${message}`);
     }
-  }, [baseName, showExportError, showExportSuccess, xmlText]);
+  }, [baseName, loadedXmlText, showExportError, showExportSuccess]);
 
   const downloadDiagnostics = useCallback(() => {
-    if (!xmlText) {
+    if (!loadedXmlText) {
       showExportError('Load a file before downloading diagnostics.');
       return;
     }
 
     try {
       const payload = {
-        filename: filename || `${baseName}.xml`,
+        filename: loadedFilename || `${baseName}.xml`,
         diagnostics,
         warnings,
         renderError: renderError || null,
@@ -618,7 +697,7 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error);
       showExportError(`Diagnostics export failed: ${message}`);
     }
-  }, [baseName, diagnostics, filename, renderError, showExportError, showExportSuccess, warnings, xmlText]);
+  }, [baseName, diagnostics, loadedFilename, loadedXmlText, renderError, showExportError, showExportSuccess, warnings]);
 
   const exportSvg = useCallback(() => {
     const svg = getRenderedSvgs(containerRef.current)[0];
@@ -734,6 +813,104 @@ export default function App() {
     }
   }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
 
+  const generateChordPro = useCallback(async () => {
+    if (!loadedXmlText) {
+      showExportError('Load a file before generating ChordPro.');
+      return;
+    }
+
+    try {
+      const options = buildChordProOptionsFromUI(chordProUi);
+      const result = await convertMusicXmlToChordPro(
+        { filename: loadedFilename, xmlText: loadedXmlText },
+        options,
+      );
+      setChordProText(result.chordPro);
+      setChordProWarnings(result.warnings);
+      setChordProDiagnostics(result.diagnostics);
+
+      if (result.error) {
+        showExportError(`ChordPro generated with issues: ${result.error}`);
+        return;
+      }
+      showExportSuccess('ChordPro generated.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`ChordPro conversion failed: ${message}`);
+    }
+  }, [chordProUi, loadedFilename, loadedXmlText, showExportError, showExportSuccess]);
+
+  const copyChordPro = useCallback(async () => {
+    if (!chordProText) {
+      showExportError('Generate ChordPro before copying.');
+      return;
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(chordProText);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = chordProText;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.append(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) {
+          throw new Error('Copy command was not successful.');
+        }
+      }
+      showExportSuccess('Copied.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`Copy failed: ${message}`);
+    }
+  }, [chordProText, showExportError, showExportSuccess]);
+
+  const downloadChordPro = useCallback(() => {
+    if (!chordProText) {
+      showExportError('Generate ChordPro before downloading.');
+      return;
+    }
+
+    try {
+      const filename = deriveProFilename(loadedFilename);
+      const blob = new Blob([chordProText], { type: 'text/plain;charset=utf-8' });
+      triggerBlobDownload(blob, filename);
+      showExportSuccess('Downloaded .pro file.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`ChordPro download failed: ${message}`);
+    }
+  }, [chordProText, loadedFilename, showExportError, showExportSuccess]);
+
+  const canShareChordPro =
+    typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+  const shareChordPro = useCallback(async () => {
+    if (!chordProText) {
+      showExportError('Generate ChordPro before sharing.');
+      return;
+    }
+    if (!canShareChordPro) {
+      showExportError('Share is not supported in this browser.');
+      return;
+    }
+
+    try {
+      const filename = deriveProFilename(loadedFilename);
+      const file = new File([chordProText], filename, { type: 'text/plain' });
+      await navigator.share({ files: [file], title: filename });
+      showExportSuccess('ChordPro shared.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`Share failed: ${message}`);
+    }
+  }, [canShareChordPro, chordProText, loadedFilename, showExportError, showExportSuccess]);
+
   const canSharePdf =
     typeof navigator !== 'undefined' &&
     typeof navigator.share === 'function' &&
@@ -823,7 +1000,7 @@ export default function App() {
         </button>
       </header>
 
-      {xmlText && diagnostics && !diagnostics.isValidXml && (
+      {loadedXmlText && diagnostics && !diagnostics.isValidXml && (
         <div className="error-banner">XML parse error: {diagnostics.parseError ?? 'Invalid XML'}</div>
       )}
       {renderError && <div className="error-banner">Render error: {renderError}</div>}
@@ -838,16 +1015,16 @@ export default function App() {
           onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
         >
-          {!xmlText ? <p className="placeholder">Upload a MusicXML or MXL file to render notation.</p> : null}
+          {!loadedXmlText ? <p className="placeholder">Upload a MusicXML or MXL file to render notation.</p> : null}
           <div ref={containerRef} className="score-container" />
         </section>
 
         <aside className="side-panel">
           <h2>Diagnostics</h2>
-          {xmlText && diagnostics ? (
+          {loadedXmlText && diagnostics ? (
             <ul>
               <li>
-                <strong>File:</strong> {filename || 'n/a'}
+                <strong>File:</strong> {loadedFilename || 'n/a'}
               </li>
               <li>
                 <strong>Root:</strong> {diagnostics.rootName}
@@ -881,13 +1058,16 @@ export default function App() {
               <li>
                 <strong>Has divisions:</strong> {diagnostics.hasDivisions ? 'yes' : 'no'}
               </li>
+              <li>
+                <strong>Source type:</strong> {isMxl ? 'MXL archive' : 'XML text'}
+              </li>
             </ul>
           ) : (
             <p>No file loaded.</p>
           )}
 
           <h2>Warnings</h2>
-          {xmlText ? (
+          {loadedXmlText ? (
             warnings.length > 0 ? (
               <ul>
                 {warnings.map((warning) => (
@@ -899,6 +1079,113 @@ export default function App() {
             )
           ) : (
             <p>Load a file to view warnings.</p>
+          )}
+
+
+          <h2>ChordPro Export</h2>
+          <div className="chordpro-options-grid">
+            <label className="export-label" htmlFor="chordpro-bars">
+              Bars per line
+            </label>
+            <input
+              id="chordpro-bars"
+              type="number"
+              min={1}
+              max={16}
+              value={chordProUi.barsPerLine}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setChordProUi((prev) => ({
+                  ...prev,
+                  barsPerLine: Number.isFinite(value) ? Math.max(1, Math.min(16, value)) : prev.barsPerLine,
+                }));
+              }}
+            />
+
+            <label className="export-label" htmlFor="chordpro-mode">
+              Mode
+            </label>
+            <select
+              id="chordpro-mode"
+              value={chordProUi.mode}
+              onChange={(event) =>
+                setChordProUi((prev) => ({ ...prev, mode: event.target.value as ChordProModeUi }))
+              }
+            >
+              <option value="auto">Auto</option>
+              <option value="lyrics-inline">Lyrics Inline</option>
+              <option value="grid-only">Grid Only</option>
+            </select>
+
+            <label className="export-label" htmlFor="chordpro-brackets">
+              Chord bracket style
+            </label>
+            <select
+              id="chordpro-brackets"
+              value={chordProUi.chordBracketStyle}
+              onChange={(event) =>
+                setChordProUi((prev) => ({ ...prev, chordBracketStyle: event.target.value as ChordProBracketUi }))
+              }
+            >
+              <option value="separate">Separate</option>
+              <option value="combined">Combined</option>
+            </select>
+
+            <label className="export-label" htmlFor="chordpro-repeat">
+              Repeat
+            </label>
+            <select
+              id="chordpro-repeat"
+              value={chordProUi.repeatStrategy}
+              onChange={(event) =>
+                setChordProUi((prev) => ({ ...prev, repeatStrategy: event.target.value as ChordProRepeatUi }))
+              }
+            >
+              <option value="none">None</option>
+              <option value="simple-unroll">Simple Unroll</option>
+            </select>
+          </div>
+
+          <div className="export-actions">
+            <button type="button" onClick={() => void generateChordPro()} disabled={!loadedXmlText}>
+              Generate ChordPro
+            </button>
+            <button type="button" onClick={() => void copyChordPro()} disabled={!chordProText}>
+              Copy
+            </button>
+            <button type="button" onClick={downloadChordPro} disabled={!chordProText}>
+              Download .pro
+            </button>
+            {canShareChordPro && (
+              <button type="button" onClick={() => void shareChordPro()} disabled={!chordProText}>
+                Share
+              </button>
+            )}
+          </div>
+
+          <textarea
+            className="chordpro-output"
+            value={chordProText}
+            placeholder="Generated ChordPro will appear here..."
+            readOnly
+          />
+
+          {chordProWarnings.length > 0 && (
+            <div className="warning-block">
+              <strong>ChordPro warnings</strong>
+              <ul>
+                {chordProWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {chordProDiagnostics && (
+            <p className="hint-text">
+              Resolved mode: <strong>{chordProDiagnostics.formatModeResolved}</strong> · Measures:{' '}
+              {chordProDiagnostics.measuresCount}
+            </p>
           )}
 
           <h2>Export</h2>

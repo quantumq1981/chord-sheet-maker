@@ -247,3 +247,45 @@ select:disabled {
     order: 2;
   }
 }
+
+.chordpro-options-grid {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.chordpro-options-grid input,
+.chordpro-options-grid select,
+.chordpro-output {
+  width: 100%;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.5rem;
+}
+
+.chordpro-output {
+  margin-top: 0.75rem;
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.84rem;
+}
+
+.warning-block {
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #d97706;
+  border-radius: 0.5rem;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.warning-block ul {
+  margin: 0.4rem 0 0;
+}
+
+.hint-text {
+  margin: 0.5rem 0 0.75rem;
+  color: #475569;
+  font-size: 0.85rem;
+}
