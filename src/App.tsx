@@ -22,12 +22,120 @@ const ACCEPTED_EXTENSIONS = ['.xml', '.musicxml', '.mxl'];
 
 type PdfPageSize = 'letter' | 'a4';
 
+type PrintPageSize = PdfPageSize;
+
 type ExportFeedback = {
   type: 'success' | 'error';
   message: string;
 };
 
 const IOS_USER_AGENT = /iPad|iPhone|iPod/;
+const PRINT_ZOOM = 1.0;
+
+type MutableEngravingRules = OpenSheetMusicDisplay['EngravingRules'] & {
+  PageWidth?: number;
+};
+
+type EngravingRulesSnapshot = Partial<{
+  PageWidth: number;
+  PageHeight: number;
+  PageTopMargin: number;
+  PageBottomMargin: number;
+  PageLeftMargin: number;
+  PageRightMargin: number;
+  SystemLeftMargin: number;
+  SystemRightMargin: number;
+}> & {
+  PageFormatWidth?: number;
+  PageFormatHeight?: number;
+};
+
+function getRuleValue(rules: MutableEngravingRules, key: keyof EngravingRulesSnapshot): number | undefined {
+  if (!(key in rules)) {
+    return undefined;
+  }
+  const value = (rules as unknown as Record<string, unknown>)[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function setRuleValue(
+  rules: MutableEngravingRules,
+  key: keyof EngravingRulesSnapshot,
+  value: number,
+): void {
+  if (!(key in rules)) {
+    return;
+  }
+  (rules as unknown as Record<string, unknown>)[key] = value;
+}
+
+function snapshotEngravingRules(osmd: OpenSheetMusicDisplay): EngravingRulesSnapshot {
+  const rules = osmd.EngravingRules as MutableEngravingRules;
+  const pageFormat = 'PageFormat' in rules ? (rules.PageFormat as { width?: number; height?: number } | undefined) : undefined;
+
+  return {
+    PageWidth: getRuleValue(rules, 'PageWidth'),
+    PageHeight: getRuleValue(rules, 'PageHeight'),
+    PageTopMargin: getRuleValue(rules, 'PageTopMargin'),
+    PageBottomMargin: getRuleValue(rules, 'PageBottomMargin'),
+    PageLeftMargin: getRuleValue(rules, 'PageLeftMargin'),
+    PageRightMargin: getRuleValue(rules, 'PageRightMargin'),
+    SystemLeftMargin: getRuleValue(rules, 'SystemLeftMargin'),
+    SystemRightMargin: getRuleValue(rules, 'SystemRightMargin'),
+    PageFormatWidth: typeof pageFormat?.width === 'number' ? pageFormat.width : undefined,
+    PageFormatHeight: typeof pageFormat?.height === 'number' ? pageFormat.height : undefined,
+  };
+}
+
+function applyPrintProfile(osmd: OpenSheetMusicDisplay, pageSize: PrintPageSize): void {
+  const rules = osmd.EngravingRules as MutableEngravingRules;
+  const formatId = pageSize === 'letter' ? 'Letter_P' : 'A4_P';
+  osmd.setPageFormat(formatId);
+
+  // EngravingRules units are build-dependent in OSMD, so we only apply conservative
+  // direct values where these fields exist and are numeric in this runtime.
+  if (pageSize === 'letter') {
+    setRuleValue(rules, 'PageWidth', 8.5);
+    setRuleValue(rules, 'PageHeight', 11);
+    setRuleValue(rules, 'PageTopMargin', 0.5);
+    setRuleValue(rules, 'PageBottomMargin', 0.5);
+    setRuleValue(rules, 'PageLeftMargin', 0.5);
+    setRuleValue(rules, 'PageRightMargin', 0.5);
+  } else {
+    setRuleValue(rules, 'PageWidth', 210);
+    setRuleValue(rules, 'PageHeight', 297);
+    setRuleValue(rules, 'PageTopMargin', 12);
+    setRuleValue(rules, 'PageBottomMargin', 12);
+    setRuleValue(rules, 'PageLeftMargin', 12);
+    setRuleValue(rules, 'PageRightMargin', 12);
+  }
+}
+
+function restoreEngravingRules(osmd: OpenSheetMusicDisplay, snapshot: EngravingRulesSnapshot): void {
+  const rules = osmd.EngravingRules as MutableEngravingRules;
+
+  if (typeof snapshot.PageFormatWidth === 'number' && typeof snapshot.PageFormatHeight === 'number') {
+    osmd.setCustomPageFormat(snapshot.PageFormatWidth, snapshot.PageFormatHeight);
+  }
+
+  const ruleKeys: (keyof EngravingRulesSnapshot)[] = [
+    'PageWidth',
+    'PageHeight',
+    'PageTopMargin',
+    'PageBottomMargin',
+    'PageLeftMargin',
+    'PageRightMargin',
+    'SystemLeftMargin',
+    'SystemRightMargin',
+  ];
+
+  for (const key of ruleKeys) {
+    const value = snapshot[key];
+    if (typeof value === 'number') {
+      setRuleValue(rules, key, value);
+    }
+  }
+}
 
 function getBaseFilename(name: string): string {
   const cleaned = name.trim();
@@ -538,8 +646,14 @@ export default function App() {
   }, [baseName, showExportError, showExportSuccess]);
 
   const exportPdf = useCallback(async (maxPages?: number) => {
-    const svgs = getRenderedSvgs(containerRef.current);
-    if (svgs.length === 0) {
+    const osmd = osmdRef.current;
+    if (!osmd) {
+      showExportError('Renderer is not ready yet.');
+      return;
+    }
+
+    const initialSvgs = getRenderedSvgs(containerRef.current);
+    if (initialSvgs.length === 0) {
       showExportError('No rendered score found. Render the file before exporting PDF.');
       return;
     }
@@ -549,7 +663,19 @@ export default function App() {
     const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
     const margin = isLetter ? 0.5 : 12;
 
+    const rulesSnapshot = snapshotEngravingRules(osmd);
+    const zoomSnapshot = osmd.Zoom;
+
     try {
+      applyPrintProfile(osmd, pdfPageSize);
+      osmd.Zoom = PRINT_ZOOM;
+      osmd.render();
+
+      const svgs = getRenderedSvgs(containerRef.current);
+      if (svgs.length === 0) {
+        throw new Error('No rendered score found after applying print layout.');
+      }
+
       const pdf = new jsPDF({ orientation: 'portrait', unit, format });
       const pagesToExport = typeof maxPages === 'number' ? svgs.slice(0, maxPages) : svgs;
 
@@ -591,6 +717,10 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showExportError(`PDF export failed: ${message}`);
+    } finally {
+      restoreEngravingRules(osmd, rulesSnapshot);
+      osmd.Zoom = zoomSnapshot;
+      osmd.render();
     }
   }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
 
@@ -626,12 +756,40 @@ export default function App() {
   }, [canSharePdf, pdfBlobUrl, pdfFilename, showExportError, showExportSuccess]);
 
   const printScore = useCallback(() => {
-    if (renderedPageCount === 0) {
+    const osmd = osmdRef.current;
+    if (!osmd || renderedPageCount === 0) {
       showExportError('No rendered score found. Render the file before printing.');
       return;
     }
-    window.print();
-  }, [renderedPageCount, showExportError]);
+
+    const rulesSnapshot = snapshotEngravingRules(osmd);
+    const zoomSnapshot = osmd.Zoom;
+
+    let restored = false;
+    const restoreAfterPrint = () => {
+      if (restored) {
+        return;
+      }
+      restored = true;
+      window.removeEventListener('afterprint', restoreAfterPrint);
+      restoreEngravingRules(osmd, rulesSnapshot);
+      osmd.Zoom = zoomSnapshot;
+      osmd.render();
+    };
+
+    try {
+      applyPrintProfile(osmd, pdfPageSize);
+      osmd.Zoom = PRINT_ZOOM;
+      osmd.render();
+      window.addEventListener('afterprint', restoreAfterPrint, { once: true });
+      window.print();
+      setTimeout(restoreAfterPrint, 1000);
+    } catch (error) {
+      restoreAfterPrint();
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`Print failed: ${message}`);
+    }
+  }, [pdfPageSize, renderedPageCount, showExportError]);
 
   return (
     <div className="app-shell">
