@@ -162,22 +162,74 @@ select:disabled {
   color: #991b1b;
 }
 
+.pdf-ready-box {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #16a34a;
+  border-radius: 0.5rem;
+  background: #f0fdf4;
+}
+
+.pdf-ready-title {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+  color: #166534;
+}
+
+.pdf-ready-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.pdf-ready-actions a {
+  display: inline-block;
+  text-decoration: none;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  color: #0f172a;
+  background: #fff;
+}
+
+.open-pdf-link {
+  border-color: #16a34a !important;
+  background: #dcfce7 !important;
+  color: #166534 !important;
+  font-weight: 600;
+}
+
 @media print {
+  body {
+    margin: 0;
+  }
+
   .top-bar,
   .side-panel,
-  .error-banner {
+  .error-banner,
+  .hint,
+  .export-feedback,
+  .pdf-ready-box,
+  .placeholder,
+  button,
+  select,
+  label {
     display: none !important;
   }
 
   .content-grid {
-    grid-template-columns: 1fr;
-    padding: 0;
+    display: block !important;
+    padding: 0 !important;
   }
 
   .score-viewport {
-    border: 0;
-    padding: 0;
-    overflow: visible;
+    border: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .score-container {
+    width: 100% !important;
+    min-height: 0 !important;
   }
 }
 

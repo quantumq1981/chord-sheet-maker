@@ -262,6 +262,8 @@ export default function App() {
   const [pdfPageSize, setPdfPageSize] = useState<PdfPageSize>('letter');
   const [isDragging, setIsDragging] = useState(false);
   const [renderedPageCount, setRenderedPageCount] = useState(0);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [pdfFilename, setPdfFilename] = useState<string>('score.pdf');
 
   const parsedXml = useMemo(() => {
     if (!xmlText) {
@@ -343,6 +345,13 @@ export default function App() {
   }, [xmlText, zoom, diagnostics]);
 
   const clearAll = useCallback(() => {
+    setPdfBlobUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return null;
+    });
+    setPdfFilename('score.pdf');
     setFilename('');
     setXmlText('');
     setRenderError('');
@@ -429,6 +438,24 @@ export default function App() {
   const showExportSuccess = useCallback((message: string) => {
     setExportFeedback({ type: 'success', message });
   }, []);
+
+  const clearPdfOutput = useCallback(() => {
+    setPdfBlobUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return null;
+    });
+    setPdfFilename('score.pdf');
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+      }
+    };
+  }, [pdfBlobUrl]);
 
   const canExportInputs = Boolean(xmlText);
   const baseName = getBaseFilename(filename);
@@ -517,15 +544,6 @@ export default function App() {
       return;
     }
 
-    const popup = window.open('', '_blank', 'noopener,noreferrer');
-    if (!popup) {
-      showExportError('Popup blocked. Allow popups and try again.');
-      return;
-    }
-    popup.document.title = 'Generating PDF…';
-    popup.document.body.innerHTML =
-      '<p style="font-family:sans-serif;padding:16px">Generating PDF…</p>';
-
     const isLetter = pdfPageSize === 'letter';
     const unit = isLetter ? 'in' : 'mm';
     const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
@@ -562,18 +580,58 @@ export default function App() {
 
       const blob = pdf.output('blob');
       const url = URL.createObjectURL(blob);
-      popup.location.href = url;
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      showExportSuccess(
-        `Exported PDF (${pagesToExport.length} page${pagesToExport.length > 1 ? 's' : ''}).`,
-      );
+      setPdfBlobUrl((previousUrl) => {
+        if (previousUrl) {
+          URL.revokeObjectURL(previousUrl);
+        }
+        return url;
+      });
+      setPdfFilename(`${baseName}.pdf`);
+      showExportSuccess('PDF ready. Tap Open PDF.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      popup.document.title = 'PDF export failed';
-      popup.document.body.innerHTML = `<p style="font-family:sans-serif;padding:16px;color:#b00020">PDF export failed: ${message}</p>`;
       showExportError(`PDF export failed: ${message}`);
     }
   }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
+
+  const canSharePdf =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function';
+
+  const sharePdf = useCallback(async () => {
+    if (!pdfBlobUrl) {
+      showExportError('Generate PDF first.');
+      return;
+    }
+    if (!canSharePdf) {
+      showExportError('PDF share is not supported in this browser.');
+      return;
+    }
+
+    try {
+      const response = await fetch(pdfBlobUrl);
+      const blob = await response.blob();
+      const file = new File([blob], pdfFilename, { type: 'application/pdf' });
+      if (!navigator.canShare({ files: [file] })) {
+        showExportError('PDF share is not supported in this browser.');
+        return;
+      }
+      await navigator.share({ files: [file], title: pdfFilename });
+      showExportSuccess('PDF shared.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showExportError(`PDF share failed: ${message}`);
+    }
+  }, [canSharePdf, pdfBlobUrl, pdfFilename, showExportError, showExportSuccess]);
+
+  const printScore = useCallback(() => {
+    if (renderedPageCount === 0) {
+      showExportError('No rendered score found. Render the file before printing.');
+      return;
+    }
+    window.print();
+  }, [renderedPageCount, showExportError]);
 
   return (
     <div className="app-shell">
@@ -703,14 +761,39 @@ export default function App() {
               Export PNG (first page)
             </button>
             <button type="button" onClick={() => void exportPdf()} disabled={!canExportInputs}>
-              Export PDF
+              Generate PDF
             </button>
             {renderedPageCount > 6 && (
               <button type="button" onClick={() => void exportPdf(1)} disabled={!canExportInputs}>
                 Export PDF (First Page)
               </button>
             )}
+            <button type="button" onClick={printScore} disabled={renderedPageCount === 0}>
+              Print / Save as PDF
+            </button>
           </div>
+
+          {pdfBlobUrl && (
+            <div className="pdf-ready-box">
+              <p className="pdf-ready-title">PDF Ready</p>
+              <div className="pdf-ready-actions">
+                <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
+                  Open PDF
+                </a>
+                <a href={pdfBlobUrl} download={pdfFilename}>
+                  Download PDF
+                </a>
+                {canSharePdf && (
+                  <button type="button" onClick={() => void sharePdf()}>
+                    Share PDF
+                  </button>
+                )}
+                <button type="button" onClick={clearPdfOutput}>
+                  Clear PDF
+                </button>
+              </div>
+            </div>
+          )}
 
           {exportFeedback && (
             <p className={`export-feedback ${exportFeedback.type}`}>{exportFeedback.message}</p>
