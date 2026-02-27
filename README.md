@@ -41,6 +41,7 @@ Supported options:
 - Mode: Auto, Lyrics Inline, or Grid Only
 - Chord bracket style: Separate (`[C][G7]`) or Combined (`[C G7]`)
 - Repeat strategy: None or Simple Unroll (MVP)
+- Grid-only mode quantizes chord changes per measure into beat slots (derived from time signature top number, default 4). Optional API override: `gridSlotsPerMeasure`.
 
 Actions:
 - Generate ChordPro

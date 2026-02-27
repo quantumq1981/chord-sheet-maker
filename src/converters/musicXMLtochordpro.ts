@@ -37,6 +37,7 @@ export type MetadataPolicy =
 
 export interface ConvertOptions {
   barsPerLine: number;
+  gridSlotsPerMeasure?: number;
   barlineStyle: BarlineStyle;
   wrapPolicy: MeasureWrapPolicy;
   chordBracketStyle: ChordBracketStyle;
@@ -266,13 +267,6 @@ export async function convertMusicXmlToChordPro(
     diagnostics.repeatMarkersFound = repeatMarkersFound;
     diagnostics.endingsFound = endingsFound;
 
-    if (!hasAnyHarmony) {
-      warnings.push("no harmony found");
-    }
-    if (!hasAnyLyrics) {
-      warnings.push("no lyrics found");
-    }
-
     const measureOrder = resolveMeasureOrder(measures, mergedOptions, warnings, diagnostics);
     const orderedMeasures = measureOrder.map((i) => measures[i]).filter((m): m is MeasureData => Boolean(m));
 
@@ -280,6 +274,13 @@ export async function convertMusicXmlToChordPro(
       ? (hasAnyLyrics ? "lyrics-inline" : "grid-only")
       : mergedOptions.formatMode;
     diagnostics.formatModeResolved = formatModeResolved;
+
+    if (!hasAnyHarmony) {
+      warnings.push("no harmony found");
+    }
+    if (!hasAnyLyrics && formatModeResolved !== "grid-only") {
+      warnings.push("no lyrics found");
+    }
 
     const lines: string[] = [];
     if (mergedOptions.metadataPolicy === "emit") {
@@ -305,7 +306,7 @@ export async function convertMusicXmlToChordPro(
       }
       lines.push(...rendered);
     } else {
-      const rendered = renderGrid(orderedMeasures, mergedOptions, warnings);
+      const rendered = renderGrid(orderedMeasures, mergedOptions, warnings, metadata.time);
       if (lines.length > 0 && rendered.length > 0) {
         lines.push("");
       }
@@ -514,20 +515,74 @@ function renderLyricsInline(
   return lines;
 }
 
-function renderGrid(measures: MeasureData[], options: ConvertOptions, warnings: string[]): string[] {
+function renderGrid(
+  measures: MeasureData[],
+  options: ConvertOptions,
+  warnings: string[],
+  timeSignature?: string
+): string[] {
+  const slotsPerMeasure = resolveGridSlotsPerMeasure(options, timeSignature);
+  let measuresWithMultipleChords = 0;
+  let totalCollisions = 0;
+
   const measureTexts = measures.map((measure) => {
-    if (measure.harmonies.length > 1) {
-      warnings.push("multiple chords in measure in grid-only");
+    const slots = Array(slotsPerMeasure).fill(".");
+    const harmonies = [...measure.harmonies].sort((a, b) => a.offsetDivisions - b.offsetDivisions);
+    if (harmonies.length > 1) {
+      measuresWithMultipleChords += 1;
     }
-    const chord = measure.harmonies[0]?.chordText;
-    return chord ? `[${chord}] . . .` : ". . . .";
+
+    for (const harmony of harmonies) {
+      const slotIndexRaw = measure.durationDivisions > 0
+        ? Math.floor((harmony.offsetDivisions / measure.durationDivisions) * slotsPerMeasure)
+        : 0;
+      const slotIndex = Math.max(0, Math.min(slotsPerMeasure - 1, slotIndexRaw));
+      if (slots[slotIndex] !== ".") {
+        totalCollisions += 1;
+        continue;
+      }
+      slots[slotIndex] = `[${harmony.chordText}]`;
+    }
+
+    return slots.join(" ");
   });
+
+  if (measuresWithMultipleChords > 0) {
+    warnings.push(
+      `Grid quantized to ${slotsPerMeasure} slots/measure; ${measuresWithMultipleChords} measures contain multiple chord changes.`
+    );
+  }
+  if (totalCollisions > 0) {
+    warnings.push(
+      `Some measures contain multiple chord changes within the same grid slot (${totalCollisions} collisions). Consider higher slot resolution.`
+    );
+  }
 
   return [
     "{start_of_grid}",
     ...emitWrappedBars(measureTexts, options),
     "{end_of_grid}",
   ];
+}
+
+function resolveGridSlotsPerMeasure(options: ConvertOptions, timeSignature?: string): number {
+  const configuredSlots = options.gridSlotsPerMeasure;
+  if (Number.isFinite(configuredSlots) && configuredSlots != null && configuredSlots > 0) {
+    return Math.floor(configuredSlots);
+  }
+
+  if (!timeSignature) {
+    return 4;
+  }
+
+  const [beatsText] = timeSignature.split("/");
+  const beats = Number.parseInt(beatsText, 10);
+  if (!Number.isFinite(beats) || beats <= 0) {
+    return 4;
+  }
+
+  // MVP: use the top number directly (e.g., 6/8 => 6 slots).
+  return beats;
 }
 
 function emitWrappedBars(measureTexts: string[], options: ConvertOptions): string[] {
