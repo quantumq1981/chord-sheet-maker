@@ -27,6 +27,16 @@ type Diagnostics = {
 };
 
 const ACCEPTED_EXTENSIONS = ['.xml', '.musicxml', '.mxl'];
+const FILE_INPUT_ACCEPT = [
+  ...ACCEPTED_EXTENSIONS,
+  '.XML',
+  '.MusicXML',
+  '.MXL',
+  'application/xml',
+  'text/xml',
+  'application/vnd.recordare.musicxml+xml',
+  'application/vnd.recordare.musicxml',
+].join(',');
 
 type PdfPageSize = 'letter' | 'a4';
 
@@ -261,8 +271,8 @@ async function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Bl
 }
 
 function hasAcceptedExtension(name: string): boolean {
-  const lower = name.toLowerCase();
-  return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  const normalizedName = name.trim().toLowerCase();
+  return ACCEPTED_EXTENSIONS.some((ext) => normalizedName.endsWith(ext));
 }
 
 function buildChordProOptionsFromUI(uiState: ChordProUiState) {
@@ -983,7 +993,7 @@ export default function App() {
       <header className="top-bar">
         <label className="upload-btn">
           Upload
-          <input type="file" accept=".xml,.musicxml,.mxl" onChange={onFileInput} />
+          <input type="file" accept={FILE_INPUT_ACCEPT} onChange={onFileInput} />
         </label>
         <span className="hint">Drag and drop .xml / .musicxml / .mxl anywhere in the score area</span>
         <button type="button" onClick={() => adjustZoom(-0.1)}>
