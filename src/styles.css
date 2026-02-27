@@ -1,0 +1,134 @@
+:root {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid #cbd5e1;
+  background: #ffffff;
+}
+
+.top-bar .hint {
+  margin-right: auto;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.upload-btn {
+  position: relative;
+  border: 1px solid #334155;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #f1f5f9;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.upload-btn input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+button {
+  border: 1px solid #94a3b8;
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f8fafc;
+}
+
+.error-banner {
+  margin: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #dc2626;
+  border-radius: 0.5rem;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.score-viewport {
+  border: 2px dashed #cbd5e1;
+  border-radius: 0.75rem;
+  background: #fff;
+  overflow: auto;
+  padding: 1rem;
+  position: relative;
+}
+
+.score-viewport.dragging {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.placeholder {
+  color: #64748b;
+}
+
+.score-container {
+  min-height: 70vh;
+}
+
+.side-panel {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background: #fff;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.side-panel h2 {
+  margin-top: 0;
+}
+
+.side-panel ul {
+  padding-left: 1.1rem;
+}
+
+@media (max-width: 1100px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .top-bar {
+    flex-wrap: wrap;
+  }
+
+  .top-bar .hint {
+    width: 100%;
+    order: 2;
+  }
+}

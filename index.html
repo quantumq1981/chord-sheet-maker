@@ -1,23 +1,12 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Chord Sheet Maker</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <div class="container">
-    <h1>Chord Sheet Maker</h1>
-    <textarea id="input" placeholder="Paste your ChordPro text here..."></textarea>
-    <div class="buttons">
-      <button onclick="renderChart()">Render</button>
-      <button onclick="printChart()">Print</button>
-      <button onclick="clearInput()">Clear</button>
-    </div>
-    <div id="output" class="output-area"></div>
-  </div>
-
-  <script src="script.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chord Sheet Maker</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
