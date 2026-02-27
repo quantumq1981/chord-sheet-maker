@@ -45,7 +45,10 @@ type EngravingRulesSnapshot = Partial<{
   PageRightMargin: number;
   SystemLeftMargin: number;
   SystemRightMargin: number;
-}>;
+}> & {
+  PageFormatWidth?: number;
+  PageFormatHeight?: number;
+};
 
 function getRuleValue(rules: MutableEngravingRules, key: keyof EngravingRulesSnapshot): number | undefined {
   if (!(key in rules)) {
@@ -68,6 +71,8 @@ function setRuleValue(
 
 function snapshotEngravingRules(osmd: OpenSheetMusicDisplay): EngravingRulesSnapshot {
   const rules = osmd.EngravingRules as MutableEngravingRules;
+  const pageFormat = 'PageFormat' in rules ? (rules.PageFormat as { width?: number; height?: number } | undefined) : undefined;
+
   return {
     PageWidth: getRuleValue(rules, 'PageWidth'),
     PageHeight: getRuleValue(rules, 'PageHeight'),
@@ -77,6 +82,8 @@ function snapshotEngravingRules(osmd: OpenSheetMusicDisplay): EngravingRulesSnap
     PageRightMargin: getRuleValue(rules, 'PageRightMargin'),
     SystemLeftMargin: getRuleValue(rules, 'SystemLeftMargin'),
     SystemRightMargin: getRuleValue(rules, 'SystemRightMargin'),
+    PageFormatWidth: typeof pageFormat?.width === 'number' ? pageFormat.width : undefined,
+    PageFormatHeight: typeof pageFormat?.height === 'number' ? pageFormat.height : undefined,
   };
 }
 
@@ -106,7 +113,23 @@ function applyPrintProfile(osmd: OpenSheetMusicDisplay, pageSize: PrintPageSize)
 
 function restoreEngravingRules(osmd: OpenSheetMusicDisplay, snapshot: EngravingRulesSnapshot): void {
   const rules = osmd.EngravingRules as MutableEngravingRules;
-  for (const key of Object.keys(snapshot) as (keyof EngravingRulesSnapshot)[]) {
+
+  if (typeof snapshot.PageFormatWidth === 'number' && typeof snapshot.PageFormatHeight === 'number') {
+    osmd.setCustomPageFormat(snapshot.PageFormatWidth, snapshot.PageFormatHeight);
+  }
+
+  const ruleKeys: (keyof EngravingRulesSnapshot)[] = [
+    'PageWidth',
+    'PageHeight',
+    'PageTopMargin',
+    'PageBottomMargin',
+    'PageLeftMargin',
+    'PageRightMargin',
+    'SystemLeftMargin',
+    'SystemRightMargin',
+  ];
+
+  for (const key of ruleKeys) {
     const value = snapshot[key];
     if (typeof value === 'number') {
       setRuleValue(rules, key, value);
