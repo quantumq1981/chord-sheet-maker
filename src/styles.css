@@ -291,3 +291,214 @@ select:disabled {
   color: #475569;
   font-size: 0.85rem;
 }
+
+/* ── Mode badge (shown in top bar) ───────────────────────────────────────── */
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.mode-badge--notation {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.mode-badge--chart {
+  background: #fdf4ff;
+  border-color: #d8b4fe;
+  color: #7e22ce;
+}
+
+/* ── Transpose controls ───────────────────────────────────────────────────── */
+
+.transpose-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.transpose-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  min-width: 5rem;
+}
+
+.transpose-value {
+  min-width: 2.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Chord chart viewport ─────────────────────────────────────────────────── */
+
+.chord-chart-viewport {
+  flex: 1;
+  overflow: auto;
+  padding: 1.5rem 2rem;
+  background: #fff;
+  border: 2px dashed #cbd5e1;
+  border-radius: 0.75rem;
+}
+
+/* ── ChordChart component ─────────────────────────────────────────────────── */
+
+.chord-chart {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: #0f172a;
+  max-width: 900px;
+}
+
+/* Header */
+.cc-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.cc-title {
+  margin: 0 0 0.15rem;
+  font-size: 1.4rem;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.cc-artist {
+  margin: 0 0 0.35rem;
+  font-style: italic;
+  color: #475569;
+}
+
+.cc-subtitle {
+  margin: 0 0 0.35rem;
+  color: #64748b;
+  font-size: 0.88rem;
+}
+
+.cc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: #334155;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.cc-meta span {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.45rem;
+}
+
+/* Sections */
+.cc-section {
+  margin-bottom: 1.25rem;
+}
+
+.cc-section-label {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7c3aed;
+  margin-bottom: 0.35rem;
+}
+
+/* Lines */
+.cc-line {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 0.1rem;
+}
+
+/* Chord-only line */
+.cc-chords-only {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.cc-chords-only__cell {
+  display: inline-block;
+}
+
+/* Lyrics-only line */
+.cc-lyrics-only {
+  color: #0f172a;
+}
+
+/* Mixed chord+lyric line */
+.cc-mixed {
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+/* Each chord/lyric pair stacked vertically */
+.cc-pair {
+  display: inline-flex;
+  flex-direction: column;
+  vertical-align: bottom;
+  margin-right: 0;
+}
+
+.cc-pair__chord {
+  min-height: 1.3em;
+  line-height: 1.2;
+  white-space: pre;
+}
+
+.cc-pair__lyric {
+  white-space: pre;
+}
+
+/* Chord text styling (shared) */
+.cc-chord {
+  color: #1d4ed8;
+  font-weight: 700;
+  padding-right: 0.3em;
+}
+
+/* Comment line */
+.cc-comment {
+  font-style: italic;
+  color: #64748b;
+  margin-bottom: 0.25rem;
+}
+
+/* Empty state */
+.cc-empty {
+  color: #64748b;
+  font-style: italic;
+}
+
+/* ── Download ChordPro button area in chart mode ──────────────────────────── */
+
+.chart-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+@media print {
+  .chord-chart-viewport {
+    border: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  .chord-chart {
+    max-width: 100%;
+  }
+}
