@@ -122,13 +122,40 @@ interface ParsedMetadata {
 }
 
 const KIND_SUFFIX_MAP: Record<string, string> = {
+  // Triads
   major: "",
   minor: "m",
+  diminished: "dim",
+  augmented: "aug",
+  // Suspended
+  "suspended-second": "sus2",
+  "suspended-fourth": "sus4",
+  // Sixths
+  "major-sixth": "6",
+  "minor-sixth": "m6",
+  // Sevenths
   dominant: "7",
   "major-seventh": "maj7",
   "minor-seventh": "m7",
-  diminished: "dim",
-  augmented: "aug",
+  "diminished-seventh": "dim7",
+  "augmented-seventh": "aug7",
+  "half-diminished": "m7b5",
+  "major-minor": "mmaj7",
+  // Ninths
+  "dominant-ninth": "9",
+  "major-ninth": "maj9",
+  "minor-ninth": "m9",
+  // Elevenths
+  "dominant-11th": "11",
+  "major-11th": "maj11",
+  "minor-11th": "m11",
+  // Thirteenths
+  "dominant-13th": "13",
+  "major-13th": "maj13",
+  "minor-13th": "m13",
+  // Other
+  power: "5",
+  pedal: "ped",
 };
 
 export function getDefaultConvertOptions(): ConvertOptions {
@@ -190,10 +217,10 @@ export async function extractMusicXmlTextFromFile(file: File): Promise<{
   };
 }
 
-export async function convertMusicXmlToChordPro(
+export function convertMusicXmlToChordPro(
   input: ConvertInput,
   options?: Partial<ConvertOptions>
-): Promise<ConvertOutput> {
+): ConvertOutput {
   const mergedOptions = { ...getDefaultConvertOptions(), ...(options ?? {}) };
   const warnings: string[] = [];
 
@@ -234,7 +261,7 @@ export async function convertMusicXmlToChordPro(
     const selectedLyricPartId = selectLyricPart(xmlDoc);
     diagnostics.selectedLyricPartId = selectedLyricPartId;
 
-    const measures = buildMeasureData(xmlDoc, selectedLyricPartId, mergedOptions, warnings);
+    const measures = buildMeasureData(xmlDoc, selectedLyricPartId);
     diagnostics.measuresCount = measures.length;
 
     const verseSet = new Set<string>();
@@ -386,8 +413,6 @@ function selectLyricPart(xmlDoc: Document): string | undefined {
 function buildMeasureData(
   xmlDoc: Document,
   selectedLyricPartId: string | undefined,
-  options: ConvertOptions,
-  warnings: string[]
 ): MeasureData[] {
   const parts = [...xmlDoc.querySelectorAll("score-partwise > part")];
   const lyricPart = parts.find((part) => part.getAttribute("id") === selectedLyricPartId) ?? parts[0];
@@ -466,9 +491,6 @@ function buildMeasureData(
       .some((repeat) => (repeat.getAttribute("direction") ?? "") === "backward");
 
     const endings = parseEndings(measureEl);
-    if (endings.length > 0 && options.repeatStrategy === "simple-unroll") {
-      warnings.push("unsupported endings");
-    }
 
     result.push({
       measureIndex,

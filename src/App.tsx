@@ -402,6 +402,9 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const didAutoFitRef = useRef(false);
+  // Tracks which XML string was last passed to osmd.load() so that zoom/re-render
+  // changes can call osmd.render() directly without re-parsing the entire document.
+  const xmlLoadedRef = useRef<string>('');
   const [loadedFilename, setLoadedFilename] = useState<string>('');
   const [loadedXmlText, setLoadedXmlText] = useState<string>('');
   const [isMxl, setIsMxl] = useState(false);
@@ -468,6 +471,12 @@ export default function App() {
       autoResize: true,
       drawingParameters: 'default',
     });
+
+    // Reset the ref on cleanup so React StrictMode's double-invoke (and genuine
+    // unmount/remount cycles) re-initialise OSMD against the live container.
+    return () => {
+      osmdRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -482,13 +491,20 @@ export default function App() {
         if (container) {
           container.innerHTML = '';
         }
+        // Reset so that uploading the same valid file again re-triggers osmd.load().
+        xmlLoadedRef.current = '';
         setRenderedPageCount(0);
         return;
       }
 
       try {
         setRenderError('');
-        await osmd.load(loadedXmlText);
+        // Only re-parse and load the XML document when it has actually changed.
+        // Zoom adjustments only need osmd.render(), not a full re-parse.
+        if (xmlLoadedRef.current !== loadedXmlText) {
+          await osmd.load(loadedXmlText);
+          xmlLoadedRef.current = loadedXmlText;
+        }
         osmd.Zoom = zoom;
         osmd.render();
         setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
@@ -501,6 +517,8 @@ export default function App() {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setRenderError(message);
+        // Reset on error so a retry attempt will call osmd.load() again.
+        xmlLoadedRef.current = '';
         setRenderedPageCount(0);
       }
     };
@@ -509,12 +527,8 @@ export default function App() {
   }, [loadedXmlText, zoom, diagnostics]);
 
   const clearAll = useCallback(() => {
-    setPdfBlobUrl((previousUrl) => {
-      if (previousUrl) {
-        URL.revokeObjectURL(previousUrl);
-      }
-      return null;
-    });
+    // The pdfBlobUrl cleanup effect revokes the old URL when it changes to null.
+    setPdfBlobUrl(null);
     setPdfFilename('score.pdf');
     setLoadedFilename('');
     setLoadedXmlText('');
@@ -526,6 +540,7 @@ export default function App() {
     setChordProDiagnostics(null);
     setZoom(1);
     setRenderedPageCount(0);
+    xmlLoadedRef.current = '';
     const container = containerRef.current;
     if (container) {
       container.innerHTML = '';
@@ -615,12 +630,8 @@ export default function App() {
   }, []);
 
   const clearPdfOutput = useCallback(() => {
-    setPdfBlobUrl((previousUrl) => {
-      if (previousUrl) {
-        URL.revokeObjectURL(previousUrl);
-      }
-      return null;
-    });
+    // The cleanup effect revokes the previous URL when pdfBlobUrl changes to null.
+    setPdfBlobUrl(null);
     setPdfFilename('score.pdf');
   }, []);
 
@@ -773,12 +784,8 @@ export default function App() {
 
       const blob = pdf.output('blob');
       const url = URL.createObjectURL(blob);
-      setPdfBlobUrl((previousUrl) => {
-        if (previousUrl) {
-          URL.revokeObjectURL(previousUrl);
-        }
-        return url;
-      });
+      // The cleanup effect revokes the previous URL; no need to revoke it here too.
+      setPdfBlobUrl(url);
       setPdfFilename(`${baseName}.pdf`);
       showExportSuccess('PDF ready. Tap Open PDF.');
     } catch (error) {
