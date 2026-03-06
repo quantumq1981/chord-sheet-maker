@@ -502,3 +502,53 @@ select:disabled {
     max-width: 100%;
   }
 }
+
+
+.omr-panel {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.6rem;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.omr-upload-btn {
+  display: inline-block;
+  width: fit-content;
+}
+
+.error-text {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.omr-status-card {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  padding: 0.6rem;
+  background: #f8fafc;
+}
+
+.omr-status-card p {
+  margin: 0.2rem 0;
+}
+
+.omr-status-card pre,
+.omr-failure pre {
+  margin: 0.5rem 0 0;
+  overflow: auto;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.omr-stage-list {
+  margin: 0.4rem 0 0;
+  padding-left: 1rem;
+}
+
+.omr-stage-list li.active {
+  font-weight: 700;
+  color: #1d4ed8;
+}
