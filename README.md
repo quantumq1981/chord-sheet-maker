@@ -68,11 +68,49 @@ This repo is configured to deploy via GitHub Actions.
 
 The site is built with Vite base path set to `/chord-sheet-maker/` for correct asset loading on Pages.
 
-## OMR backend (Audiveris)
 
-This repository now includes a FastAPI backend for asynchronous OMR processing with Audiveris.
+## OMR backend integration (Audiveris)
 
-- Backend code: `backend/app`
-- Worker wrapper: `backend/worker/run-audiveris-job`
-- Docker assets: `backend/Dockerfile.api`, `backend/Dockerfile.worker`, `docker-compose.omr.yml`
-- API/docs: `backend/README.md`
+This frontend now supports **async OMR import** in addition to direct MusicXML/MXL upload.
+
+### Configure API base URL
+
+Create a local env file:
+
+```bash
+cp .env.example .env.local
+```
+
+Set the backend URL:
+
+```bash
+VITE_OMR_API_BASE=http://localhost:8080
+```
+
+If omitted, the app uses same-origin paths (e.g. `/api/omr/...`).
+
+### OMR upload flow in the UI
+
+Use the **OMR Import (Audiveris)** panel in the side panel:
+
+1. Select a `.pdf`, `.png`, `.jpg`, or `.jpeg` file.
+2. Start OMR job (`POST /api/omr/jobs`).
+3. Watch status updates (`queued` → `preprocessing` → `running_audiveris` → `parsing_output` → `completed`/`failed`).
+4. On completion, frontend fetches result (`GET /api/omr/jobs/:jobId/result`) and loads returned `.musicxml`/`.mxl` into the existing OSMD renderer.
+5. Artifact links are shown (musicxml, mxl, log, summary) along with summary metadata when provided.
+6. If failed, structured failure payload is shown from `GET /api/omr/jobs/:jobId/error`.
+
+### Local development workflow
+
+Run backend and frontend together:
+
+```bash
+# terminal 1
+OMR_DATA_ROOT=/tmp/omr-jobs uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8080
+
+# terminal 2
+npm run dev
+```
+
+Then open the app, use OMR Import for PDF/image scoring, or continue using direct `.xml` / `.musicxml` / `.mxl` upload as before.
+
