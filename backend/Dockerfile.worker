@@ -1,0 +1,17 @@
+FROM eclipse-temurin:17-jre-jammy
+
+ARG AUDIVERIS_DOWNLOAD_URL="https://github.com/Audiveris/audiveris/releases/download/5.6.1/Audiveris-5.6.1-linux-x86_64.AppImage"
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates fuse libfuse2 && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/audiveris/bin && \
+    curl -L "$AUDIVERIS_DOWNLOAD_URL" -o /opt/audiveris/bin/Audiveris && \
+    chmod +x /opt/audiveris/bin/Audiveris
+
+COPY backend/worker/run-audiveris-job /usr/local/bin/run-audiveris-job
+RUN chmod +x /usr/local/bin/run-audiveris-job
+
+ENV AUDIVERIS_BIN=/opt/audiveris/bin/Audiveris
+WORKDIR /work
+
+ENTRYPOINT ["/usr/local/bin/run-audiveris-job"]

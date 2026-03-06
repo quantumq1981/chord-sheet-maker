@@ -67,3 +67,12 @@ This repo is configured to deploy via GitHub Actions.
 3. Set **Source** to **GitHub Actions**.
 
 The site is built with Vite base path set to `/chord-sheet-maker/` for correct asset loading on Pages.
+
+## OMR backend (Audiveris)
+
+This repository now includes a FastAPI backend for asynchronous OMR processing with Audiveris.
+
+- Backend code: `backend/app`
+- Worker wrapper: `backend/worker/run-audiveris-job`
+- Docker assets: `backend/Dockerfile.api`, `backend/Dockerfile.worker`, `docker-compose.omr.yml`
+- API/docs: `backend/README.md`

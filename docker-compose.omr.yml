@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.api
+    environment:
+      OMR_DATA_ROOT: /work/jobs
+      AUDIVERIS_BIN: /opt/audiveris/bin/Audiveris
+      MAX_UPLOAD_MB: 50
+      AUDIVERIS_TIMEOUT_SECONDS: 300
+      AUDIVERIS_FORCE_REPROCESS: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - omr-work:/work
+
+  audiveris-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.worker
+    volumes:
+      - omr-work:/work
+    profiles: ["worker"]
+
+volumes:
+  omr-work:
