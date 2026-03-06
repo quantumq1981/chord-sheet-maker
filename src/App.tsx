@@ -58,6 +58,52 @@ type ChordProUiState = {
   repeatStrategy: ChordProRepeatUi;
 };
 
+type OmrJobStatus = 'queued' | 'preprocessing' | 'running_audiveris' | 'parsing_output' | 'completed' | 'failed';
+
+type OmrApiError = {
+  code?: string;
+  message?: string;
+  stage?: string;
+  exitCode?: number;
+  stderrSnippet?: string;
+  logUrl?: string;
+};
+
+type OmrJobProgress = {
+  stage: OmrJobStatus;
+  message: string;
+  percent: number;
+};
+
+type OmrJobStatusResponse = {
+  jobId: string;
+  status: OmrJobStatus;
+  progress?: OmrJobProgress;
+};
+
+type OmrResultResponse = {
+  jobId: string;
+  status: OmrJobStatus;
+  result?: {
+    musicxmlUrl?: string | null;
+    mxlUrl?: string | null;
+    summary?: Record<string, unknown>;
+  };
+};
+
+type OmrErrorResponse = {
+  jobId: string;
+  status: OmrJobStatus;
+  error?: OmrApiError;
+};
+
+type OmrArtifactLinks = {
+  musicxmlUrl?: string;
+  mxlUrl?: string;
+  logUrl?: string;
+  summaryUrl?: string;
+};
+
 // ─── File-accept string ───────────────────────────────────────────────────────
 
 const FILE_INPUT_ACCEPT = [
@@ -70,6 +116,14 @@ const FILE_INPUT_ACCEPT = [
   // Generic text (UG-style, chords-over-words)
   '.txt',
 ].join(',');
+
+
+const OMR_FILE_INPUT_ACCEPT = ['.pdf', '.png', '.jpg', '.jpeg', 'application/pdf', 'image/png', 'image/jpeg'].join(',');
+const OMR_ALLOWED_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg']);
+const OMR_POLL_MS_FAST = 2000;
+const OMR_POLL_MS_SLOW = 4500;
+const OMR_POLL_SLOWDOWN_AFTER_MS = 30000;
+const OMR_API_BASE = (import.meta.env.VITE_OMR_API_BASE as string | undefined)?.trim() || '';
 
 // ─── OSMD helpers ─────────────────────────────────────────────────────────────
 
@@ -176,6 +230,40 @@ function getBaseFilename(name: string): string {
   if (parts.length === 1) return cleaned;
   parts.pop();
   return parts.join('.') || 'score';
+}
+
+
+function getOmrSourceType(file: File): 'pdf' | 'image' | null {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (!OMR_ALLOWED_EXTENSIONS.has(ext)) return null;
+  return ext === 'pdf' ? 'pdf' : 'image';
+}
+
+function resolveOmrUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  if (!OMR_API_BASE) return pathOrUrl;
+  return `${OMR_API_BASE.replace(/\/$/, '')}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
+}
+
+async function parseOmrError(response: Response): Promise<string> {
+  const fallback = `Request failed (${response.status})`;
+  try {
+    const data = await response.json() as { error?: OmrApiError; detail?: { error?: OmrApiError } };
+    const err = data?.error ?? data?.detail?.error;
+    if (!err) return fallback;
+    const parts = [err.code, err.message, err.stage].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function fetchTextOrArrayBuffer(response: Response): Promise<{ xmlText?: string; mxlBuffer?: ArrayBuffer }> {
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('zip') || contentType.includes('application/vnd.recordare.musicxml')) {
+    return { mxlBuffer: await response.arrayBuffer() };
+  }
+  return { xmlText: await response.text() };
 }
 
 function getRenderedSvgs(container: HTMLDivElement | null): SVGSVGElement[] {
@@ -412,6 +500,20 @@ export default function App() {
   const [renderError, setRenderError] = useState('');
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(null);
 
+  // ── OMR integration state ──
+  const [omrFile, setOmrFile] = useState<File | null>(null);
+  const [omrValidationMessage, setOmrValidationMessage] = useState('');
+  const [omrSubmissionInFlight, setOmrSubmissionInFlight] = useState(false);
+  const [omrJobId, setOmrJobId] = useState('');
+  const [omrJobStatus, setOmrJobStatus] = useState<OmrJobStatus | null>(null);
+  const [omrProgressMessage, setOmrProgressMessage] = useState('');
+  const [omrSummary, setOmrSummary] = useState<Record<string, unknown> | null>(null);
+  const [omrArtifacts, setOmrArtifacts] = useState<OmrArtifactLinks>({});
+  const [omrFailure, setOmrFailure] = useState<OmrApiError | null>(null);
+  const [omrUiError, setOmrUiError] = useState('');
+  const omrPollingTimerRef = useRef<number | null>(null);
+  const omrPollStartedAtRef = useRef<number>(0);
+
   // ── Notation (OSMD) mode state ──
   const containerRef = useRef<HTMLDivElement | null>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
@@ -506,6 +608,133 @@ export default function App() {
     return () => { if (pdfBlobUrl) URL.revokeObjectURL(pdfBlobUrl); };
   }, [pdfBlobUrl]);
 
+  useEffect(() => {
+    return () => {
+      if (omrPollingTimerRef.current !== null) {
+        window.clearTimeout(omrPollingTimerRef.current);
+      }
+    };
+  }, []);
+
+  const stopOmrPolling = useCallback(() => {
+    if (omrPollingTimerRef.current !== null) {
+      window.clearTimeout(omrPollingTimerRef.current);
+      omrPollingTimerRef.current = null;
+    }
+  }, []);
+
+  const resetOmrState = useCallback(() => {
+    stopOmrPolling();
+    setOmrFile(null);
+    setOmrValidationMessage('');
+    setOmrSubmissionInFlight(false);
+    setOmrJobId('');
+    setOmrJobStatus(null);
+    setOmrProgressMessage('');
+    setOmrSummary(null);
+    setOmrArtifacts({});
+    setOmrFailure(null);
+    setOmrUiError('');
+  }, [stopOmrPolling]);
+
+  const loadOmrResultIntoNotation = useCallback(async (result: OmrResultResponse['result'], jobId: string) => {
+    if (!result) throw new Error('Invalid result payload: missing result object.');
+    const selectedUrl = result.musicxmlUrl ?? result.mxlUrl;
+    if (!selectedUrl) throw new Error('Invalid result payload: no musicxmlUrl or mxlUrl.');
+
+    const resolvedUrl = resolveOmrUrl(selectedUrl);
+    const response = await fetch(resolvedUrl);
+    if (!response.ok) throw new Error(`Result download failed: ${await parseOmrError(response)}`);
+
+    const { xmlText, mxlBuffer } = await fetchTextOrArrayBuffer(response);
+    let parsedXmlText = xmlText ?? '';
+    let loadedFromMxl = false;
+
+    if (mxlBuffer) {
+      const inferredFilename = `omr-${jobId}.mxl`;
+      const mxlFile = new File([mxlBuffer], inferredFilename, { type: 'application/zip' });
+      const extracted = await extractMusicXmlTextFromFile(mxlFile);
+      parsedXmlText = extracted.xmlText;
+      loadedFromMxl = true;
+    }
+
+    if (!parsedXmlText.trim()) throw new Error('Invalid result payload: empty MusicXML data.');
+
+    didAutoFitRef.current = false;
+    setLoadedFilename(`omr-${jobId}.${loadedFromMxl ? 'mxl' : 'musicxml'}`);
+    setLoadedXmlText(parsedXmlText);
+    setIsMxl(loadedFromMxl);
+    setRenderError('');
+    setExportFeedback({ type: 'success', message: 'OMR conversion completed and score loaded.' });
+    setChartDocument(null);
+    setTransposeSteps(0);
+    setDetectedFormatLabel(loadedFromMxl ? 'MXL (OMR)' : 'MusicXML (OMR)');
+    setAppMode('notation');
+  }, []);
+
+  const fetchOmrFailure = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(resolveOmrUrl(`/api/omr/jobs/${jobId}/error`));
+      if (!response.ok) return;
+      const payload = await response.json() as OmrErrorResponse;
+      if (payload.error) {
+        setOmrFailure(payload.error);
+        if (payload.error.logUrl) {
+          setOmrArtifacts((prev) => ({ ...prev, logUrl: payload.error?.logUrl }));
+        }
+      }
+    } catch {
+      // best effort only
+    }
+  }, []);
+
+  const pollOmrJob = useCallback(async (jobId: string) => {
+    try {
+      const statusResponse = await fetch(resolveOmrUrl(`/api/omr/jobs/${jobId}`));
+      if (!statusResponse.ok) {
+        throw new Error(await parseOmrError(statusResponse));
+      }
+      const statusPayload = await statusResponse.json() as OmrJobStatusResponse;
+      setOmrJobStatus(statusPayload.status);
+      setOmrProgressMessage(statusPayload.progress?.message ?? statusPayload.status);
+
+      if (statusPayload.status === 'completed') {
+        stopOmrPolling();
+        const resultResponse = await fetch(resolveOmrUrl(`/api/omr/jobs/${jobId}/result`));
+        if (!resultResponse.ok) {
+          throw new Error(await parseOmrError(resultResponse));
+        }
+        const resultPayload = await resultResponse.json() as OmrResultResponse;
+        const links: OmrArtifactLinks = {
+          musicxmlUrl: resultPayload.result?.musicxmlUrl ?? undefined,
+          mxlUrl: resultPayload.result?.mxlUrl ?? undefined,
+          logUrl: `/api/omr/jobs/${jobId}/artifacts/log`,
+          summaryUrl: `/api/omr/jobs/${jobId}/artifacts/summary`,
+        };
+        setOmrArtifacts(links);
+        setOmrSummary((resultPayload.result?.summary ?? null) as Record<string, unknown> | null);
+        await loadOmrResultIntoNotation(resultPayload.result, jobId);
+        return;
+      }
+
+      if (statusPayload.status === 'failed') {
+        stopOmrPolling();
+        await fetchOmrFailure(jobId);
+        return;
+      }
+
+      const elapsed = Date.now() - omrPollStartedAtRef.current;
+      const interval = elapsed >= OMR_POLL_SLOWDOWN_AFTER_MS ? OMR_POLL_MS_SLOW : OMR_POLL_MS_FAST;
+      omrPollingTimerRef.current = window.setTimeout(() => {
+        void pollOmrJob(jobId);
+      }, interval);
+    } catch (error) {
+      stopOmrPolling();
+      const message = error instanceof Error ? error.message : String(error);
+      setOmrUiError(`Polling failure: ${message}`);
+    }
+  }, [fetchOmrFailure, loadOmrResultIntoNotation, stopOmrPolling]);
+
   // ── Clear all ──
   const clearAll = useCallback(() => {
     setAppMode('empty');
@@ -528,7 +757,9 @@ export default function App() {
     setChartDocument(null);
     setTransposeSteps(0);
     setDetectedFormatLabel('');
-  }, []);
+    // OMR
+    resetOmrState();
+  }, [resetOmrState]);
 
   // ── File loading ──
   const loadFile = useCallback(async (file: File) => {
@@ -618,6 +849,78 @@ export default function App() {
     },
     [loadFile],
   );
+
+  const onOmrFileInput = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    if (!file) return;
+    const sourceType = getOmrSourceType(file);
+    if (!sourceType) {
+      setOmrFile(null);
+      setOmrValidationMessage('Unsupported file type. Please choose PDF, PNG, JPG, or JPEG.');
+      return;
+    }
+    setOmrFile(file);
+    setOmrValidationMessage('');
+    setOmrUiError('');
+    setOmrFailure(null);
+    event.target.value = '';
+  }, []);
+
+  const onOmrDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0] ?? null;
+    if (!file) return;
+    const sourceType = getOmrSourceType(file);
+    if (!sourceType) {
+      setOmrFile(null);
+      setOmrValidationMessage('Unsupported file type. Please choose PDF, PNG, JPG, or JPEG.');
+      return;
+    }
+    setOmrFile(file);
+    setOmrValidationMessage('');
+    setOmrUiError('');
+    setOmrFailure(null);
+  }, []);
+
+  const submitOmrJob = useCallback(async () => {
+    if (!omrFile) {
+      setOmrValidationMessage('Select a PDF/image file before starting OMR.');
+      return;
+    }
+    const sourceType = getOmrSourceType(omrFile);
+    if (!sourceType) {
+      setOmrValidationMessage('Unsupported file type. Please choose PDF, PNG, JPG, or JPEG.');
+      return;
+    }
+
+    stopOmrPolling();
+    setOmrSubmissionInFlight(true);
+    setOmrUiError('');
+    setOmrFailure(null);
+    setOmrSummary(null);
+    setOmrArtifacts({});
+
+    try {
+      const body = new FormData();
+      body.append('file', omrFile);
+      body.append('sourceType', sourceType);
+      const response = await fetch(resolveOmrUrl('/api/omr/jobs'), { method: 'POST', body });
+      if (!response.ok) {
+        throw new Error(`Upload failure: ${await parseOmrError(response)}`);
+      }
+      const created = await response.json() as { jobId: string; status: OmrJobStatus };
+      setOmrJobId(created.jobId);
+      setOmrJobStatus(created.status);
+      setOmrProgressMessage('Queued for processing');
+      omrPollStartedAtRef.current = Date.now();
+      void pollOmrJob(created.jobId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setOmrUiError(message);
+    } finally {
+      setOmrSubmissionInFlight(false);
+    }
+  }, [omrFile, pollOmrJob, stopOmrPolling]);
 
   // ── Notation controls ──
   const adjustZoom = useCallback((delta: number) => {
@@ -943,6 +1246,59 @@ export default function App() {
 
         {/* ── Right: side panel ── */}
         <aside className="side-panel">
+          <section className="omr-panel" onDragOver={(event) => event.preventDefault()} onDrop={onOmrDrop}>
+            <h2>OMR Import (Audiveris)</h2>
+            <p className="hint-text">Upload PDF/image, create an async OMR job, and load the result into notation view.</p>
+            <label className="upload-btn omr-upload-btn">
+              Select PDF / PNG / JPG
+              <input type="file" accept={OMR_FILE_INPUT_ACCEPT} onChange={onOmrFileInput} />
+            </label>
+            <button type="button" onClick={() => void submitOmrJob()} disabled={omrSubmissionInFlight || !omrFile}>
+              {omrSubmissionInFlight ? 'Submitting...' : 'Start OMR Job'}
+            </button>
+            <p className="hint-text">Selected: {omrFile ? omrFile.name : 'None'}</p>
+            {omrValidationMessage && <p className="error-text">{omrValidationMessage}</p>}
+            {omrUiError && <p className="error-text">{omrUiError}</p>}
+
+            {omrJobId && (
+              <div className="omr-status-card">
+                <p><strong>Job ID:</strong> {omrJobId}</p>
+                <p><strong>Status:</strong> {omrJobStatus ?? 'n/a'}</p>
+                {omrProgressMessage && <p><strong>Progress:</strong> {omrProgressMessage}</p>}
+                <ul className="omr-stage-list">
+                  {['queued', 'preprocessing', 'running_audiveris', 'parsing_output', 'completed', 'failed'].map((stage) => (
+                    <li key={stage} className={omrJobStatus === stage ? 'active' : ''}>{stage}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {omrSummary && (
+              <div className="omr-status-card">
+                <strong>Summary</strong>
+                <pre>{JSON.stringify(omrSummary, null, 2)}</pre>
+              </div>
+            )}
+
+            {(omrArtifacts.musicxmlUrl || omrArtifacts.mxlUrl || omrArtifacts.logUrl || omrArtifacts.summaryUrl) && (
+              <div className="omr-status-card">
+                <strong>Artifacts</strong>
+                <ul>
+                  {omrArtifacts.musicxmlUrl && <li><a href={resolveOmrUrl(omrArtifacts.musicxmlUrl)} target="_blank" rel="noopener noreferrer">musicxml</a></li>}
+                  {omrArtifacts.mxlUrl && <li><a href={resolveOmrUrl(omrArtifacts.mxlUrl)} target="_blank" rel="noopener noreferrer">mxl</a></li>}
+                  {omrArtifacts.logUrl && <li><a href={resolveOmrUrl(omrArtifacts.logUrl)} target="_blank" rel="noopener noreferrer">log</a></li>}
+                  {omrArtifacts.summaryUrl && <li><a href={resolveOmrUrl(omrArtifacts.summaryUrl)} target="_blank" rel="noopener noreferrer">summary</a></li>}
+                </ul>
+              </div>
+            )}
+
+            {omrFailure && (
+              <div className="error-banner omr-failure">
+                <strong>OMR failed</strong>
+                <pre>{JSON.stringify(omrFailure, null, 2)}</pre>
+              </div>
+            )}
+          </section>
 
           {/* ── Chord-chart mode panel ── */}
           {appMode === 'chord-chart' && chartDocument && (
