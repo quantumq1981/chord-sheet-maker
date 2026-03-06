@@ -1,0 +1,49 @@
+{
+  "createJob": {
+    "jobId": "omr_20260305_abc123",
+    "status": "queued",
+    "createdAt": "2026-03-05T20:12:11Z",
+    "filename": "Black_Velvet_-_Pro.pdf",
+    "sourceType": "pdf"
+  },
+  "jobStatus": {
+    "jobId": "omr_20260305_abc123",
+    "status": "running_audiveris",
+    "progress": {
+      "stage": "running_audiveris",
+      "message": "Audiveris is transcribing score",
+      "percent": 65
+    }
+  },
+  "jobResult": {
+    "jobId": "omr_20260305_abc123",
+    "status": "completed",
+    "result": {
+      "musicxmlUrl": "/api/omr/jobs/omr_20260305_abc123/artifacts/musicxml",
+      "mxlUrl": "/api/omr/jobs/omr_20260305_abc123/artifacts/mxl",
+      "summary": {
+        "title": "Black Velvet",
+        "composer": "Alannah Myles",
+        "pages": 5,
+        "parts": 1,
+        "measures": 84,
+        "hasHarmonyTags": true,
+        "hasLyrics": false,
+        "timeSignature": "4/4",
+        "keySignature": "Em"
+      }
+    }
+  },
+  "jobError": {
+    "jobId": "omr_20260305_abc123",
+    "status": "failed",
+    "error": {
+      "code": "AUDIVERIS_EXIT_NONZERO",
+      "message": "Audiveris failed while transcribing score",
+      "stage": "running_audiveris",
+      "exitCode": 1,
+      "stderrSnippet": "...",
+      "logUrl": "/api/omr/jobs/omr_20260305_abc123/artifacts/log"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT=""
+OUTPUT=""
+STDOUT_LOG=""
+STDERR_LOG=""
+AUDIVERIS_BIN_PATH="${AUDIVERIS_BIN:-audiveris}"
+FORCE_FLAG="${AUDIVERIS_FORCE_REPROCESS:-false}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --input) INPUT="$2"; shift 2 ;;
+    --output) OUTPUT="$2"; shift 2 ;;
+    --stdout) STDOUT_LOG="$2"; shift 2 ;;
+    --stderr) STDERR_LOG="$2"; shift 2 ;;
+    --audiveris-bin) AUDIVERIS_BIN_PATH="$2"; shift 2 ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$INPUT" || -z "$OUTPUT" || -z "$STDOUT_LOG" || -z "$STDERR_LOG" ]]; then
+  echo "Missing required args" >&2
+  exit 2
+fi
+
+if [[ ! -x "$AUDIVERIS_BIN_PATH" && -z "$(command -v "$AUDIVERIS_BIN_PATH" || true)" ]]; then
+  echo "Audiveris executable not found: $AUDIVERIS_BIN_PATH" >&2
+  exit 127
+fi
+
+mkdir -p "$(dirname "$STDOUT_LOG")" "$(dirname "$STDERR_LOG")" "$OUTPUT"
+
+CMD=("$AUDIVERIS_BIN_PATH" -batch -transcribe -export -output "$OUTPUT")
+if [[ "$FORCE_FLAG" == "true" ]]; then
+  CMD+=( -force )
+fi
+CMD+=( -- "$INPUT" )
+
+"${CMD[@]}" >"$STDOUT_LOG" 2>"$STDERR_LOG"
