@@ -83,3 +83,13 @@ def test_failure_flow(monkeypatch):
     error_resp = client.get(f"/api/omr/jobs/{job_id}/error")
     assert error_resp.status_code == 200
     assert error_resp.json()["error"]["code"] == "AUDIVERIS_EXIT_NONZERO"
+
+
+def test_direct_process_endpoint():
+    files = {"file": ("score.png", io.BytesIO(b"\x89PNG"), "image/png")}
+    resp = client.post("/process", files=files)
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "completed"
+    assert payload["summary"]["hasHarmonyTags"] is True
+    assert "<score-partwise" in payload["musicxml"]
