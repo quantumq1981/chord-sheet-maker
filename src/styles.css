@@ -504,6 +504,48 @@ select:disabled {
 }
 
 
+
+.omr-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.omr-mode-toggle button {
+  min-height: 2.6rem;
+  font-weight: 600;
+}
+
+.omr-mode-toggle button.active {
+  background: #dbeafe;
+  border-color: #2563eb;
+  color: #1d4ed8;
+}
+
+.omr-summary-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.omr-summary-list {
+  margin: 0.4rem 0;
+  padding-left: 1rem;
+}
+
+@media (max-width: 640px) {
+  .top-bar button,
+  .upload-btn,
+  .omr-panel button {
+    min-height: 2.75rem;
+  }
+
+  .omr-panel {
+    padding: 0.85rem;
+  }
+}
 .omr-panel {
   border: 1px solid #cbd5e1;
   border-radius: 0.6rem;

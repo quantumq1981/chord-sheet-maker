@@ -71,7 +71,7 @@ The site is built with Vite base path set to `/chord-sheet-maker/` for correct a
 
 ## OMR backend integration (Audiveris)
 
-This frontend now supports **async OMR import** in addition to direct MusicXML/MXL upload.
+This frontend now supports **sync and async OMR import** in addition to direct MusicXML/MXL upload.
 
 ### Configure API base URL
 
@@ -87,18 +87,28 @@ Set the backend URL:
 VITE_OMR_API_BASE=http://localhost:8080
 ```
 
-If omitted, the app uses same-origin paths (e.g. `/api/omr/...`).
+If omitted, the app uses same-origin paths (e.g. `/process` and `/api/omr/...`).
+
+Optional overrides:
+
+```bash
+VITE_OMR_SYNC_ENDPOINT=/process
+VITE_OMR_ASYNC_BASE=/api/omr
+```
 
 ### OMR upload flow in the UI
 
-Use the **OMR Import (Audiveris)** panel in the side panel:
+Use the **OMR Import** panel in the side panel:
 
 1. Select a `.pdf`, `.png`, `.jpg`, or `.jpeg` file.
-2. Start OMR job (`POST /api/omr/jobs`).
-3. Watch status updates (`queued` → `preprocessing` → `running_audiveris` → `parsing_output` → `completed`/`failed`).
-4. On completion, frontend fetches result (`GET /api/omr/jobs/:jobId/result`) and loads returned `.musicxml`/`.mxl` into the existing OSMD renderer.
-5. Artifact links are shown (musicxml, mxl, log, summary) along with summary metadata when provided.
-6. If failed, structured failure payload is shown from `GET /api/omr/jobs/:jobId/error`.
+2. Choose processing mode:
+   - **Quick Process** (sync): `POST /process`, receives inline MusicXML, summary, and logs.
+   - **Background Job** (async): `POST /api/omr/jobs`, then poll status.
+3. In async mode, status updates are shown (`queued` → `preprocessing` → `running_audiveris` → `parsing_output` → `completed`/`failed`).
+4. On success, frontend loads returned `.musicxml`/`.mxl` through the same in-memory MusicXML render pipeline used by direct upload.
+5. Summary fields and collapsible logs are shown in-app.
+6. Artifact actions are shown when available (MusicXML, MXL, logs, summary JSON).
+7. On failure, structured error payload is shown (including `/api/omr/jobs/:jobId/error` for async).
 
 ### Local development workflow
 
@@ -112,5 +122,9 @@ OMR_DATA_ROOT=/tmp/omr-jobs uvicorn app.main:app --app-dir backend --host 0.0.0.
 npm run dev
 ```
 
-Then open the app, use OMR Import for PDF/image scoring, or continue using direct `.xml` / `.musicxml` / `.mxl` upload as before.
+Then open the app and:
+
+- test **sync mode** with a clean PNG/JPG for fast mobile-friendly processing
+- test **async mode** with a PDF for longer-running jobs
+- continue using direct `.xml` / `.musicxml` / `.mxl` upload as before
 
