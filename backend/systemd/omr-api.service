@@ -1,0 +1,23 @@
+[Unit]
+Description=Audiveris OMR API Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/workspace/chord-sheet-maker
+Environment=VENV_DIR=/workspace/chord-sheet-maker/.venv
+Environment=AUDIVERIS_BIN=/opt/omr/audiveris/app/build/scripts/Audiveris
+Environment=TESSDATA_PREFIX=/opt/tessdata-3.04
+Environment=OMR_DATA_ROOT=/var/lib/omr/jobs
+Environment=MAX_UPLOAD_MB=50
+Environment=AUDIVERIS_TIMEOUT_SECONDS=300
+Environment=AUDIVERIS_FORCE_REPROCESS=false
+Environment=API_PORT=8080
+ExecStart=/workspace/chord-sheet-maker/backend/scripts/start-omr-api.sh
+Restart=always
+RestartSec=3
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

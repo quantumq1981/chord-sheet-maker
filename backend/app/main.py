@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import shutil
 import uuid
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -171,6 +171,52 @@ async def create_job(
         filename=safe_name,
         sourceType=sourceType,
     )
+
+
+@app.post("/process")
+async def process_upload(file: UploadFile = File(...)):
+    ext = Path(file.filename or "").suffix.lower()
+    inferred = ALLOWED_EXTENSIONS.get(ext)
+    if not inferred:
+        raise OMRException("UNSUPPORTED_FILE_TYPE", "Unsupported file type", "preprocessing", 400)
+
+    data = await file.read()
+    if len(data) > settings.max_upload_bytes:
+        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+
+    with TemporaryDirectory(prefix="audiveris_process_") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        input_path = tmp_root / f"upload{ext}"
+        output_dir = tmp_root / "output"
+        stdout_path = tmp_root / "stdout.log"
+        stderr_path = tmp_root / "stderr.log"
+        input_path.write_bytes(data)
+
+        run_audiveris(settings, input_path, output_dir, stdout_path, stderr_path)
+
+        musicxml_path = next(output_dir.glob("*.musicxml"), None)
+        mxl_path = next(output_dir.glob("*.mxl"), None)
+        if musicxml_path is None and mxl_path is None:
+            raise OMRException(
+                "NO_MUSICXML_OUTPUT",
+                "Audiveris completed but no MusicXML artifact was found",
+                "parsing_output",
+                500,
+            )
+
+        summary = parse_musicxml_summary(musicxml_path) if musicxml_path else {}
+        return {
+            "status": "completed",
+            "filename": file.filename,
+            "sourceType": inferred,
+            "musicxml": musicxml_path.read_text(encoding="utf-8") if musicxml_path else None,
+            "mxlGenerated": mxl_path is not None,
+            "summary": summary,
+            "logs": {
+                "stdout": stdout_path.read_text(encoding="utf-8", errors="ignore"),
+                "stderr": stderr_path.read_text(encoding="utf-8", errors="ignore"),
+            },
+        }
 
 
 @app.get("/api/omr/jobs/{job_id}", response_model=JobStatusResponse)

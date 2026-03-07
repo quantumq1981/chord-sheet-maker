@@ -4,6 +4,9 @@ FastAPI backend that accepts PDF/image score uploads, runs Audiveris in headless
 
 ## Features
 
+- Synchronous endpoint for mobile clients:
+  - `POST /process` (multipart upload, inline result JSON)
+
 - Async job lifecycle with statuses:
   - `queued`
   - `preprocessing`
@@ -123,6 +126,13 @@ Fetch error report:
 curl http://localhost:8080/api/omr/jobs/<jobId>/error
 ```
 
+Synchronous processing:
+
+```bash
+curl -X POST http://localhost:8080/process \
+  -F "file=@/path/to/score.pdf"
+```
+
 
 Sample payloads are provided in `backend/examples/sample-responses.json`.
 
@@ -141,3 +151,6 @@ Run with:
 ```bash
 PYTHONPATH=backend pytest backend/tests -q
 ```
+
+
+Detailed server provisioning guide: `docs/audiveris-omr-backend-setup.md`.
