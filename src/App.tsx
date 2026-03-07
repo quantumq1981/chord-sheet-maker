@@ -19,6 +19,27 @@ import {
 import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord } from './renderers/ChordChart';
+import OmrImportPanel from './components/OmrImportPanel';
+import {
+  createOmrJob,
+  getOmrArtifactPath,
+  getOmrJobError,
+  getOmrJobResult,
+  getOmrJobStatus,
+  parseOmrError,
+  postSyncProcess,
+  resolveOmrUrl,
+} from './services/omrApi';
+import type {
+  OMRJobResultResponse,
+  OMRProcessingMode,
+  OmrApiError,
+  OmrArtifactLinks,
+  OmrJobStatus,
+  OmrLogs,
+  OmrSummary,
+} from './types/omr';
+import { loadMusicXmlFromString } from './utils/loadMusicXmlFromString';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,52 +79,6 @@ type ChordProUiState = {
   repeatStrategy: ChordProRepeatUi;
 };
 
-type OmrJobStatus = 'queued' | 'preprocessing' | 'running_audiveris' | 'parsing_output' | 'completed' | 'failed';
-
-type OmrApiError = {
-  code?: string;
-  message?: string;
-  stage?: string;
-  exitCode?: number;
-  stderrSnippet?: string;
-  logUrl?: string;
-};
-
-type OmrJobProgress = {
-  stage: OmrJobStatus;
-  message: string;
-  percent: number;
-};
-
-type OmrJobStatusResponse = {
-  jobId: string;
-  status: OmrJobStatus;
-  progress?: OmrJobProgress;
-};
-
-type OmrResultResponse = {
-  jobId: string;
-  status: OmrJobStatus;
-  result?: {
-    musicxmlUrl?: string | null;
-    mxlUrl?: string | null;
-    summary?: Record<string, unknown>;
-  };
-};
-
-type OmrErrorResponse = {
-  jobId: string;
-  status: OmrJobStatus;
-  error?: OmrApiError;
-};
-
-type OmrArtifactLinks = {
-  musicxmlUrl?: string;
-  mxlUrl?: string;
-  logUrl?: string;
-  summaryUrl?: string;
-};
-
 // ─── File-accept string ───────────────────────────────────────────────────────
 
 const FILE_INPUT_ACCEPT = [
@@ -123,7 +98,6 @@ const OMR_ALLOWED_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg']);
 const OMR_POLL_MS_FAST = 2000;
 const OMR_POLL_MS_SLOW = 4500;
 const OMR_POLL_SLOWDOWN_AFTER_MS = 30000;
-const OMR_API_BASE = (import.meta.env.VITE_OMR_API_BASE as string | undefined)?.trim() || '';
 
 // ─── OSMD helpers ─────────────────────────────────────────────────────────────
 
@@ -237,25 +211,6 @@ function getOmrSourceType(file: File): 'pdf' | 'image' | null {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (!OMR_ALLOWED_EXTENSIONS.has(ext)) return null;
   return ext === 'pdf' ? 'pdf' : 'image';
-}
-
-function resolveOmrUrl(pathOrUrl: string): string {
-  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-  if (!OMR_API_BASE) return pathOrUrl;
-  return `${OMR_API_BASE.replace(/\/$/, '')}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
-}
-
-async function parseOmrError(response: Response): Promise<string> {
-  const fallback = `Request failed (${response.status})`;
-  try {
-    const data = await response.json() as { error?: OmrApiError; detail?: { error?: OmrApiError } };
-    const err = data?.error ?? data?.detail?.error;
-    if (!err) return fallback;
-    const parts = [err.code, err.message, err.stage].filter(Boolean);
-    return parts.length > 0 ? parts.join(' · ') : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 async function fetchTextOrArrayBuffer(response: Response): Promise<{ xmlText?: string; mxlBuffer?: ArrayBuffer }> {
@@ -507,7 +462,10 @@ export default function App() {
   const [omrJobId, setOmrJobId] = useState('');
   const [omrJobStatus, setOmrJobStatus] = useState<OmrJobStatus | null>(null);
   const [omrProgressMessage, setOmrProgressMessage] = useState('');
-  const [omrSummary, setOmrSummary] = useState<Record<string, unknown> | null>(null);
+  const [omrMode, setOmrMode] = useState<OMRProcessingMode>('sync');
+  const [omrSummary, setOmrSummary] = useState<OmrSummary | null>(null);
+  const [omrLogs, setOmrLogs] = useState<OmrLogs | null>(null);
+  const [omrInlineMusicXml, setOmrInlineMusicXml] = useState('');
   const [omrArtifacts, setOmrArtifacts] = useState<OmrArtifactLinks>({});
   const [omrFailure, setOmrFailure] = useState<OmrApiError | null>(null);
   const [omrUiError, setOmrUiError] = useState('');
@@ -632,12 +590,14 @@ export default function App() {
     setOmrJobStatus(null);
     setOmrProgressMessage('');
     setOmrSummary(null);
+    setOmrLogs(null);
+    setOmrInlineMusicXml('');
     setOmrArtifacts({});
     setOmrFailure(null);
     setOmrUiError('');
   }, [stopOmrPolling]);
 
-  const loadOmrResultIntoNotation = useCallback(async (result: OmrResultResponse['result'], jobId: string) => {
+  const loadOmrResultIntoNotation = useCallback(async (result: OMRJobResultResponse['result'], jobId: string) => {
     if (!result) throw new Error('Invalid result payload: missing result object.');
     const selectedUrl = result.musicxmlUrl ?? result.mxlUrl;
     if (!selectedUrl) throw new Error('Invalid result payload: no musicxmlUrl or mxlUrl.');
@@ -674,14 +634,11 @@ export default function App() {
 
   const fetchOmrFailure = useCallback(async (jobId: string) => {
     try {
-      const response = await fetch(resolveOmrUrl(`/api/omr/jobs/${jobId}/error`));
-      if (!response.ok) return;
-      const payload = await response.json() as OmrErrorResponse;
-      if (payload.error) {
-        setOmrFailure(payload.error);
-        if (payload.error.logUrl) {
-          setOmrArtifacts((prev) => ({ ...prev, logUrl: payload.error?.logUrl }));
-        }
+      const payload = await getOmrJobError(jobId);
+      if (!payload?.error) return;
+      setOmrFailure(payload.error);
+      if (payload.error.logUrl) {
+        setOmrArtifacts((prev) => ({ ...prev, logUrl: payload.error?.logUrl }));
       }
     } catch {
       // best effort only
@@ -690,29 +647,22 @@ export default function App() {
 
   const pollOmrJob = useCallback(async (jobId: string) => {
     try {
-      const statusResponse = await fetch(resolveOmrUrl(`/api/omr/jobs/${jobId}`));
-      if (!statusResponse.ok) {
-        throw new Error(await parseOmrError(statusResponse));
-      }
-      const statusPayload = await statusResponse.json() as OmrJobStatusResponse;
+      const statusPayload = await getOmrJobStatus(jobId);
       setOmrJobStatus(statusPayload.status);
       setOmrProgressMessage(statusPayload.progress?.message ?? statusPayload.status);
 
       if (statusPayload.status === 'completed') {
         stopOmrPolling();
-        const resultResponse = await fetch(resolveOmrUrl(`/api/omr/jobs/${jobId}/result`));
-        if (!resultResponse.ok) {
-          throw new Error(await parseOmrError(resultResponse));
-        }
-        const resultPayload = await resultResponse.json() as OmrResultResponse;
+        const resultPayload = await getOmrJobResult(jobId);
         const links: OmrArtifactLinks = {
           musicxmlUrl: resultPayload.result?.musicxmlUrl ?? undefined,
           mxlUrl: resultPayload.result?.mxlUrl ?? undefined,
-          logUrl: `/api/omr/jobs/${jobId}/artifacts/log`,
-          summaryUrl: `/api/omr/jobs/${jobId}/artifacts/summary`,
+          logUrl: getOmrArtifactPath(jobId, 'log'),
+          summaryUrl: getOmrArtifactPath(jobId, 'summary'),
         };
         setOmrArtifacts(links);
-        setOmrSummary((resultPayload.result?.summary ?? null) as Record<string, unknown> | null);
+        setOmrSummary(resultPayload.result?.summary ?? null);
+        setOmrLogs(resultPayload.result?.logs ?? null);
         await loadOmrResultIntoNotation(resultPayload.result, jobId);
         return;
       }
@@ -898,17 +848,40 @@ export default function App() {
     setOmrUiError('');
     setOmrFailure(null);
     setOmrSummary(null);
+    setOmrLogs(null);
     setOmrArtifacts({});
 
     try {
-      const body = new FormData();
-      body.append('file', omrFile);
-      body.append('sourceType', sourceType);
-      const response = await fetch(resolveOmrUrl('/api/omr/jobs'), { method: 'POST', body });
-      if (!response.ok) {
-        throw new Error(`Upload failure: ${await parseOmrError(response)}`);
+      if (omrMode === 'sync') {
+        setOmrJobId('sync');
+        setOmrJobStatus('running_audiveris');
+        setOmrProgressMessage('Running quick process...');
+        const response = await postSyncProcess(omrFile);
+        if (response.status !== 'completed') {
+          setOmrFailure(response.error ?? { message: 'Sync process did not complete successfully.' });
+          setOmrJobStatus('failed');
+          return;
+        }
+        const parsedXmlText = loadMusicXmlFromString(response.musicxml ?? '');
+        didAutoFitRef.current = false;
+        setLoadedFilename(`omr-sync-${getBaseFilename(omrFile.name)}.musicxml`);
+        setLoadedXmlText(parsedXmlText);
+        setOmrInlineMusicXml(parsedXmlText);
+        setIsMxl(false);
+        setRenderError('');
+        setExportFeedback({ type: 'success', message: 'OMR quick process completed and score loaded.' });
+        setChartDocument(null);
+        setTransposeSteps(0);
+        setDetectedFormatLabel('MusicXML (OMR Sync)');
+        setAppMode('notation');
+        setOmrJobStatus('completed');
+        setOmrProgressMessage('Completed');
+        setOmrSummary(response.summary ?? null);
+        setOmrLogs(response.logs ?? null);
+        return;
       }
-      const created = await response.json() as { jobId: string; status: OmrJobStatus };
+
+      const created = await createOmrJob(omrFile, sourceType);
       setOmrJobId(created.jobId);
       setOmrJobStatus(created.status);
       setOmrProgressMessage('Queued for processing');
@@ -917,10 +890,11 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setOmrUiError(message);
+      setOmrJobStatus('failed');
     } finally {
       setOmrSubmissionInFlight(false);
     }
-  }, [omrFile, pollOmrJob, stopOmrPolling]);
+  }, [omrFile, omrMode, pollOmrJob, stopOmrPolling]);
 
   // ── Notation controls ──
   const adjustZoom = useCallback((delta: number) => {
@@ -1246,59 +1220,44 @@ export default function App() {
 
         {/* ── Right: side panel ── */}
         <aside className="side-panel">
-          <section className="omr-panel" onDragOver={(event) => event.preventDefault()} onDrop={onOmrDrop}>
-            <h2>OMR Import (Audiveris)</h2>
-            <p className="hint-text">Upload PDF/image, create an async OMR job, and load the result into notation view.</p>
-            <label className="upload-btn omr-upload-btn">
-              Select PDF / PNG / JPG
-              <input type="file" accept={OMR_FILE_INPUT_ACCEPT} onChange={onOmrFileInput} />
-            </label>
-            <button type="button" onClick={() => void submitOmrJob()} disabled={omrSubmissionInFlight || !omrFile}>
-              {omrSubmissionInFlight ? 'Submitting...' : 'Start OMR Job'}
-            </button>
-            <p className="hint-text">Selected: {omrFile ? omrFile.name : 'None'}</p>
-            {omrValidationMessage && <p className="error-text">{omrValidationMessage}</p>}
-            {omrUiError && <p className="error-text">{omrUiError}</p>}
-
-            {omrJobId && (
-              <div className="omr-status-card">
-                <p><strong>Job ID:</strong> {omrJobId}</p>
-                <p><strong>Status:</strong> {omrJobStatus ?? 'n/a'}</p>
-                {omrProgressMessage && <p><strong>Progress:</strong> {omrProgressMessage}</p>}
-                <ul className="omr-stage-list">
-                  {['queued', 'preprocessing', 'running_audiveris', 'parsing_output', 'completed', 'failed'].map((stage) => (
-                    <li key={stage} className={omrJobStatus === stage ? 'active' : ''}>{stage}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {omrSummary && (
-              <div className="omr-status-card">
-                <strong>Summary</strong>
-                <pre>{JSON.stringify(omrSummary, null, 2)}</pre>
-              </div>
-            )}
-
-            {(omrArtifacts.musicxmlUrl || omrArtifacts.mxlUrl || omrArtifacts.logUrl || omrArtifacts.summaryUrl) && (
-              <div className="omr-status-card">
-                <strong>Artifacts</strong>
-                <ul>
-                  {omrArtifacts.musicxmlUrl && <li><a href={resolveOmrUrl(omrArtifacts.musicxmlUrl)} target="_blank" rel="noopener noreferrer">musicxml</a></li>}
-                  {omrArtifacts.mxlUrl && <li><a href={resolveOmrUrl(omrArtifacts.mxlUrl)} target="_blank" rel="noopener noreferrer">mxl</a></li>}
-                  {omrArtifacts.logUrl && <li><a href={resolveOmrUrl(omrArtifacts.logUrl)} target="_blank" rel="noopener noreferrer">log</a></li>}
-                  {omrArtifacts.summaryUrl && <li><a href={resolveOmrUrl(omrArtifacts.summaryUrl)} target="_blank" rel="noopener noreferrer">summary</a></li>}
-                </ul>
-              </div>
-            )}
-
-            {omrFailure && (
-              <div className="error-banner omr-failure">
-                <strong>OMR failed</strong>
-                <pre>{JSON.stringify(omrFailure, null, 2)}</pre>
-              </div>
-            )}
-          </section>
+          <OmrImportPanel
+            accept={OMR_FILE_INPUT_ACCEPT}
+            file={omrFile}
+            mode={omrMode}
+            isSubmitting={omrSubmissionInFlight}
+            validationMessage={omrValidationMessage}
+            uiError={omrUiError}
+            jobId={omrJobId}
+            jobStatus={omrJobStatus}
+            progressMessage={omrProgressMessage}
+            summary={omrSummary}
+            logs={omrLogs}
+            artifacts={omrArtifacts}
+            failure={omrFailure}
+            onModeChange={setOmrMode}
+            onFileInput={onOmrFileInput}
+            onDrop={onOmrDrop}
+            onSubmit={() => void submitOmrJob()}
+            resolveUrl={resolveOmrUrl}
+            onCopySummary={async () => {
+              if (!omrSummary) return;
+              if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(JSON.stringify(omrSummary, null, 2));
+                showExportSuccess('Copied OMR summary JSON.');
+                return;
+              }
+              showExportError('Clipboard not supported in this browser.');
+            }}
+            hasInlineMusicXml={Boolean(omrInlineMusicXml)}
+            onDownloadInlineMusicXml={() => {
+              if (!omrInlineMusicXml) {
+                showExportError('No inline MusicXML found to download.');
+                return;
+              }
+              triggerBlobDownload(new Blob([omrInlineMusicXml], { type: 'application/xml;charset=utf-8' }), `${getBaseFilename(loadedFilename)}.omr.musicxml`);
+              showExportSuccess('Downloaded OMR-generated MusicXML.');
+            }}
+          />
 
           {/* ── Chord-chart mode panel ── */}
           {appMode === 'chord-chart' && chartDocument && (
