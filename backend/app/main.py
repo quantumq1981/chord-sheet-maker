@@ -5,7 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .config import Settings, load_settings
@@ -40,6 +41,14 @@ app = FastAPI(title="CSMPN OMR Backend", version="1.0.0")
 settings: Settings = load_settings()
 store = JobStore(settings.data_root)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(settings.cors_allow_origins),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.exception_handler(OMRException)
 async def omr_exception_handler(_, exc: OMRException):
@@ -48,7 +57,19 @@ async def omr_exception_handler(_, exc: OMRException):
 
 
 def _make_job_id() -> str:
-    return f"omr_{utc_now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
+    return f"omr_{utc_now().strftime('%Y%m%d')}_{uuid.uuid4().hex}"
+
+
+async def _read_upload_with_limit(file: UploadFile, max_upload_bytes: int, request: Request | None = None) -> bytes:
+    if request:
+        content_length = request.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > max_upload_bytes:
+            raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+
+    data = await file.read(max_upload_bytes + 1)
+    if len(data) > max_upload_bytes:
+        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+    return data
 
 
 def _progress_for(status: JobStatus) -> Progress:
@@ -129,6 +150,7 @@ def _process_job(job_id: str, force_reprocess: bool) -> None:
 
 @app.post("/api/omr/jobs", response_model=CreateJobResponse, status_code=202)
 async def create_job(
+    request: Request,
     file: UploadFile = File(...),
     sourceType: str = Form(...),
     forceReprocess: bool = Form(False),
@@ -145,9 +167,7 @@ async def create_job(
     if inferred != sourceType:
         raise OMRException("UNSUPPORTED_FILE_TYPE", "sourceType does not match uploaded file", "preprocessing", 400)
 
-    data = await file.read()
-    if len(data) > settings.max_upload_bytes:
-        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+    data = await _read_upload_with_limit(file, settings.max_upload_bytes, request)
 
     job_id = _make_job_id()
     safe_name = store.sanitize_filename(file.filename or "upload")
@@ -174,15 +194,13 @@ async def create_job(
 
 
 @app.post("/process")
-async def process_upload(file: UploadFile = File(...)):
+async def process_upload(request: Request, file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()
     inferred = ALLOWED_EXTENSIONS.get(ext)
     if not inferred:
         raise OMRException("UNSUPPORTED_FILE_TYPE", "Unsupported file type", "preprocessing", 400)
 
-    data = await file.read()
-    if len(data) > settings.max_upload_bytes:
-        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+    data = await _read_upload_with_limit(file, settings.max_upload_bytes, request)
 
     with TemporaryDirectory(prefix="audiveris_process_") as tmp_dir:
         tmp_root = Path(tmp_dir)

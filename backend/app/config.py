@@ -12,7 +12,7 @@ class Settings:
     audiveris_bin: str
     audiveris_timeout_seconds: int
     audiveris_force_reprocess: bool
-
+    cors_allow_origins: tuple[str, ...]
 
     @property
     def max_upload_bytes(self) -> int:
@@ -35,4 +35,9 @@ def load_settings() -> Settings:
         audiveris_bin=os.getenv("AUDIVERIS_BIN", "audiveris"),
         audiveris_timeout_seconds=int(os.getenv("AUDIVERIS_TIMEOUT_SECONDS", "300")),
         audiveris_force_reprocess=_env_bool("AUDIVERIS_FORCE_REPROCESS", False),
+        cors_allow_origins=tuple(
+            origin.strip()
+            for origin in os.getenv("CORS_ALLOW_ORIGINS", "https://yourusername.github.io").split(",")
+            if origin.strip()
+        ),
     )
