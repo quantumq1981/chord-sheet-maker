@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from threading import Lock
@@ -49,13 +50,16 @@ class JobStore:
             record.updatedAt = utc_now()
             path = self.job_dir(record.jobId) / "job.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+            temp_path = path.with_suffix(f"{path.suffix}.tmp")
+            temp_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+            os.replace(temp_path, path)
 
     def load(self, job_id: str) -> JobRecord:
         path = self.job_dir(job_id) / "job.json"
         if not path.exists():
             raise OMRException("JOB_NOT_FOUND", f"Job '{job_id}' not found", "lookup", 404)
-        return JobRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        with self._lock:
+            return JobRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     def write_summary(self, job_id: str, summary: dict) -> str:
         rel = "summary.json"
@@ -66,7 +70,7 @@ class JobStore:
     def resolve_artifact_path(self, job_id: str, artifact_rel_path: str) -> Path:
         path = (self.job_dir(job_id) / artifact_rel_path).resolve()
         job_root = self.job_dir(job_id).resolve()
-        if not str(path).startswith(str(job_root)):
+        if not path.is_relative_to(job_root):
             raise OMRException("INTERNAL_SERVER_ERROR", "Artifact path escaped job directory", "artifact", 500)
         return path
 
