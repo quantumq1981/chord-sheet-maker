@@ -9,30 +9,26 @@ from pathlib import Path
 class Settings:
     data_root: Path
     max_upload_mb: int
-    audiveris_bin: str
-    audiveris_timeout_seconds: int
-    audiveris_force_reprocess: bool
-
+    oemer_timeout_seconds: int
+    cors_origins: list[str]
 
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
-
-
 def load_settings() -> Settings:
     data_root = Path(os.getenv("OMR_DATA_ROOT", "/work/jobs"))
     data_root.mkdir(parents=True, exist_ok=True)
+
+    # CORS_ORIGINS accepts a comma-separated list of allowed origins.
+    # Defaults to "*" for local / personal-use deployments.
+    raw_origins = os.getenv("CORS_ORIGINS", "*")
+    origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+
     return Settings(
         data_root=data_root,
         max_upload_mb=int(os.getenv("MAX_UPLOAD_MB", "50")),
-        audiveris_bin=os.getenv("AUDIVERIS_BIN", "audiveris"),
-        audiveris_timeout_seconds=int(os.getenv("AUDIVERIS_TIMEOUT_SECONDS", "300")),
-        audiveris_force_reprocess=_env_bool("AUDIVERIS_FORCE_REPROCESS", False),
+        oemer_timeout_seconds=int(os.getenv("OEMER_TIMEOUT_SECONDS", "120")),
+        cors_origins=origins,
     )

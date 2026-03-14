@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class JobStatus(str, Enum):
     queued = "queued"
     preprocessing = "preprocessing"
-    running_audiveris = "running_audiveris"
+    running_omr = "running_omr"
     parsing_output = "parsing_output"
     completed = "completed"
     failed = "failed"

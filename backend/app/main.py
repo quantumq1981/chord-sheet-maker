@@ -5,7 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .config import Settings, load_settings
@@ -23,7 +24,7 @@ from .models import (
     Progress,
     utc_now,
 )
-from .worker import run_audiveris
+from .oemer_worker import run_oemer
 from .xml_summary import parse_musicxml_summary
 
 ALLOWED_EXTENSIONS = {".pdf": "pdf", ".png": "image", ".jpg": "image", ".jpeg": "image"}
@@ -36,29 +37,39 @@ ARTIFACT_NAME_MAP = {
     "summary": "summary",
 }
 
-app = FastAPI(title="CSMPN OMR Backend", version="1.0.0")
+app = FastAPI(title="CSMPN OMR Backend", version="2.0.0")
 settings: Settings = load_settings()
 store = JobStore(settings.data_root)
 
+# ── CORS ─────────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
 
 @app.exception_handler(OMRException)
-async def omr_exception_handler(_, exc: OMRException):
+async def omr_exception_handler(_: Request, exc: OMRException) -> JSONResponse:
     payload = {"error": {"code": exc.code, "message": exc.message, "stage": exc.stage, **exc.extra}}
     return JSONResponse(status_code=exc.status_code, content=payload)
 
 
 def _make_job_id() -> str:
-    return f"omr_{utc_now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
+    # Use the full UUID hex (32 chars) for sufficient entropy.
+    return f"omr_{utc_now().strftime('%Y%m%d')}_{uuid.uuid4().hex}"
 
 
 def _progress_for(status: JobStatus) -> Progress:
     messages = {
-        JobStatus.queued: ("Queued for processing", 5),
-        JobStatus.preprocessing: ("Validating and storing upload", 20),
-        JobStatus.running_audiveris: ("Audiveris is transcribing score", 65),
-        JobStatus.parsing_output: ("Parsing exported artifacts", 85),
-        JobStatus.completed: ("Completed", 100),
-        JobStatus.failed: ("Failed", 100),
+        JobStatus.queued:         ("Queued for processing", 5),
+        JobStatus.preprocessing:  ("Validating and storing upload", 20),
+        JobStatus.running_omr:    ("Oemer is transcribing score", 65),
+        JobStatus.parsing_output: ("Parsing exported artefacts", 85),
+        JobStatus.completed:      ("Completed", 100),
+        JobStatus.failed:         ("Failed", 100),
     }
     message, percent = messages[status]
     return Progress(stage=status, message=message, percent=percent)
@@ -72,19 +83,18 @@ def _artifact_flags(record: JobRecord) -> ArtifactFlags:
     )
 
 
-def _process_job(job_id: str, force_reprocess: bool) -> None:
+def _process_job(job_id: str, force_reprocess: bool) -> None:  # noqa: ARG001
     record = store.load(job_id)
     try:
-        record.status = JobStatus.running_audiveris
+        record.status = JobStatus.running_omr
         store.save(record)
 
         job_dir = store.job_dir(job_id)
         input_path = job_dir / record.artifacts["input"]
         output_dir = job_dir / "output"
-        stdout_path = job_dir / "logs" / "stdout.log"
-        stderr_path = job_dir / "logs" / "stderr.log"
+        log_path = job_dir / "logs" / "oemer.log"
 
-        run_audiveris(settings, input_path, output_dir, stdout_path, stderr_path, force_reprocess)
+        run_oemer(input_path, output_dir, log_path, timeout=settings.oemer_timeout_seconds)
 
         record.status = JobStatus.parsing_output
         store.save(record)
@@ -93,12 +103,12 @@ def _process_job(job_id: str, force_reprocess: bool) -> None:
         if "musicxml" not in detected and "mxl" not in detected:
             raise OMRException(
                 "NO_MUSICXML_OUTPUT",
-                "Audiveris completed but no MusicXML artifact was found",
+                "Oemer completed but no MusicXML artefact was found",
                 "parsing_output",
                 500,
             )
 
-        summary = {}
+        summary: dict = {}
         if "musicxml" in detected:
             summary = parse_musicxml_summary(store.resolve_artifact_path(job_id, detected["musicxml"]))
 
@@ -133,7 +143,7 @@ async def create_job(
     sourceType: str = Form(...),
     forceReprocess: bool = Form(False),
     notes: str | None = Form(None),
-):
+) -> CreateJobResponse:
     del notes
 
     ext = Path(file.filename or "").suffix.lower()
@@ -145,7 +155,9 @@ async def create_job(
     if inferred != sourceType:
         raise OMRException("UNSUPPORTED_FILE_TYPE", "sourceType does not match uploaded file", "preprocessing", 400)
 
-    data = await file.read()
+    # Read up to max + 1 bytes so we can detect oversize without loading the
+    # entire file into memory first.
+    data = await file.read(settings.max_upload_bytes + 1)
     if len(data) > settings.max_upload_bytes:
         raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
 
@@ -174,32 +186,31 @@ async def create_job(
 
 
 @app.post("/process")
-async def process_upload(file: UploadFile = File(...)):
+async def process_upload(file: UploadFile = File(...)) -> dict:
     ext = Path(file.filename or "").suffix.lower()
     inferred = ALLOWED_EXTENSIONS.get(ext)
     if not inferred:
         raise OMRException("UNSUPPORTED_FILE_TYPE", "Unsupported file type", "preprocessing", 400)
 
-    data = await file.read()
+    data = await file.read(settings.max_upload_bytes + 1)
     if len(data) > settings.max_upload_bytes:
         raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
 
-    with TemporaryDirectory(prefix="audiveris_process_") as tmp_dir:
+    with TemporaryDirectory(prefix="oemer_process_") as tmp_dir:
         tmp_root = Path(tmp_dir)
         input_path = tmp_root / f"upload{ext}"
         output_dir = tmp_root / "output"
-        stdout_path = tmp_root / "stdout.log"
-        stderr_path = tmp_root / "stderr.log"
+        log_path = tmp_root / "oemer.log"
         input_path.write_bytes(data)
 
-        run_audiveris(settings, input_path, output_dir, stdout_path, stderr_path)
+        run_oemer(input_path, output_dir, log_path, timeout=settings.oemer_timeout_seconds)
 
-        musicxml_path = next(output_dir.glob("*.musicxml"), None)
+        musicxml_path = next(output_dir.glob("*.musicxml"), None) or next(output_dir.glob("*.xml"), None)
         mxl_path = next(output_dir.glob("*.mxl"), None)
         if musicxml_path is None and mxl_path is None:
             raise OMRException(
                 "NO_MUSICXML_OUTPUT",
-                "Audiveris completed but no MusicXML artifact was found",
+                "Oemer completed but no MusicXML artefact was found",
                 "parsing_output",
                 500,
             )
@@ -213,14 +224,13 @@ async def process_upload(file: UploadFile = File(...)):
             "mxlGenerated": mxl_path is not None,
             "summary": summary,
             "logs": {
-                "stdout": stdout_path.read_text(encoding="utf-8", errors="ignore"),
-                "stderr": stderr_path.read_text(encoding="utf-8", errors="ignore"),
+                "stdout": log_path.read_text(encoding="utf-8", errors="ignore"),
             },
         }
 
 
 @app.get("/api/omr/jobs/{job_id}", response_model=JobStatusResponse)
-def get_job_status(job_id: str):
+def get_job_status(job_id: str) -> JobStatusResponse:
     record = store.load(job_id)
     return JobStatusResponse(
         jobId=record.jobId,
@@ -233,7 +243,7 @@ def get_job_status(job_id: str):
 
 
 @app.get("/api/omr/jobs/{job_id}/result", response_model=JobResultResponse)
-def get_job_result(job_id: str):
+def get_job_result(job_id: str) -> JobResultResponse:
     record = store.load(job_id)
     if record.status != JobStatus.completed:
         raise HTTPException(status_code=409, detail={"status": record.status})
@@ -247,7 +257,7 @@ def get_job_result(job_id: str):
 
 
 @app.get("/api/omr/jobs/{job_id}/artifacts/{artifact_name}")
-def get_job_artifact(job_id: str, artifact_name: str):
+def get_job_artifact(job_id: str, artifact_name: str) -> FileResponse:
     record = store.load(job_id)
     key = ARTIFACT_NAME_MAP.get(artifact_name)
     if not key:
@@ -263,7 +273,7 @@ def get_job_artifact(job_id: str, artifact_name: str):
 
 
 @app.get("/api/omr/jobs/{job_id}/error", response_model=JobErrorResponse)
-def get_job_error(job_id: str):
+def get_job_error(job_id: str) -> JobErrorResponse:
     record = store.load(job_id)
     if record.status != JobStatus.failed or not record.error:
         raise HTTPException(status_code=409, detail={"status": record.status})

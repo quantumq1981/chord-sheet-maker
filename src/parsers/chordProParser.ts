@@ -81,12 +81,15 @@ function normalizeLineEndings(text: string): string {
 
 function sectionTypeFromLabel(label: string): SectionType {
   const l = label.toLowerCase();
+  // 'pre-chorus' must be tested before 'chorus' because the former contains
+  // the latter as a substring — checking 'chorus' first would misclassify
+  // [Pre-Chorus] as a plain chorus section.
+  if (l.includes('pre-chorus') || l.includes('prechorus')) return 'pre-chorus';
   if (l.includes('chorus')) return 'chorus';
   if (l.includes('verse')) return 'verse';
   if (l.includes('bridge')) return 'bridge';
   if (l.includes('intro')) return 'intro';
   if (l.includes('outro')) return 'outro';
-  if (l.includes('pre-chorus') || l.includes('prechorus')) return 'pre-chorus';
   if (l.includes('interlude')) return 'interlude';
   if (l.includes('solo')) return 'solo';
   if (l.includes('grid')) return 'grid';

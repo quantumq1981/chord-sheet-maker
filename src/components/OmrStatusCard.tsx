@@ -1,6 +1,6 @@
 import type { OmrJobStatus } from '../types/omr';
 
-const STAGES: OmrJobStatus[] = ['queued', 'preprocessing', 'running_audiveris', 'parsing_output', 'completed', 'failed'];
+const STAGES: OmrJobStatus[] = ['queued', 'preprocessing', 'running_omr', 'parsing_output', 'completed', 'failed'];
 
 type Props = {
   jobId: string;
