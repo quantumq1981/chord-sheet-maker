@@ -5,5 +5,12 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test-setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/converters/**', 'src/parsers/**', 'src/ingest/**', 'src/models/**'],
+    },
   },
 });

@@ -192,9 +192,11 @@ describe('parseChordChart — dispatch', () => {
     expect(doc.sourceFormat).toBe('chords-over-words');
   });
 
-  it('unknown/mxl format falls through to parseChordPro', () => {
-    // Any format not explicitly handled should not throw.
-    const doc = parseChordChart('[C]text', 'musicxml');
+  it('"chordpro" format routes to parseChordPro and parses inline chords', () => {
+    // 'chordpro' is the default/fallback case in the dispatch switch.
+    const doc = parseChordChart('[C]text', 'chordpro');
     expect(doc.sections.length).toBeGreaterThan(0);
+    const tokens = doc.sections[0].lines[0].tokens;
+    expect(tokens[0]).toMatchObject({ kind: 'chord', text: 'C' });
   });
 });
