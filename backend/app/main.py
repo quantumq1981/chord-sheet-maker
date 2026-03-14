@@ -62,6 +62,19 @@ def _make_job_id() -> str:
     return f"omr_{utc_now().strftime('%Y%m%d')}_{uuid.uuid4().hex}"
 
 
+async def _read_upload_with_limit(file: UploadFile, max_upload_bytes: int, request: Request | None = None) -> bytes:
+    # Fast-path: reject immediately if Content-Length header already exceeds limit.
+    if request:
+        content_length = request.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > max_upload_bytes:
+            raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+
+    data = await file.read(max_upload_bytes + 1)
+    if len(data) > max_upload_bytes:
+        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+    return data
+
+
 def _progress_for(status: JobStatus) -> Progress:
     messages = {
         JobStatus.queued:         ("Queued for processing", 5),
@@ -139,6 +152,7 @@ def _process_job(job_id: str, force_reprocess: bool) -> None:  # noqa: ARG001
 
 @app.post("/api/omr/jobs", response_model=CreateJobResponse, status_code=202)
 async def create_job(
+    request: Request,
     file: UploadFile = File(...),
     sourceType: str = Form(...),
     forceReprocess: bool = Form(False),
@@ -155,11 +169,7 @@ async def create_job(
     if inferred != sourceType:
         raise OMRException("UNSUPPORTED_FILE_TYPE", "sourceType does not match uploaded file", "preprocessing", 400)
 
-    # Read up to max + 1 bytes so we can detect oversize without loading the
-    # entire file into memory first.
-    data = await file.read(settings.max_upload_bytes + 1)
-    if len(data) > settings.max_upload_bytes:
-        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+    data = await _read_upload_with_limit(file, settings.max_upload_bytes, request)
 
     job_id = _make_job_id()
     safe_name = store.sanitize_filename(file.filename or "upload")
@@ -186,15 +196,13 @@ async def create_job(
 
 
 @app.post("/process")
-async def process_upload(file: UploadFile = File(...)) -> dict:
+async def process_upload(request: Request, file: UploadFile = File(...)) -> dict:
     ext = Path(file.filename or "").suffix.lower()
     inferred = ALLOWED_EXTENSIONS.get(ext)
     if not inferred:
         raise OMRException("UNSUPPORTED_FILE_TYPE", "Unsupported file type", "preprocessing", 400)
 
-    data = await file.read(settings.max_upload_bytes + 1)
-    if len(data) > settings.max_upload_bytes:
-        raise OMRException("UPLOAD_TOO_LARGE", "Upload exceeds size limit", "preprocessing", 413)
+    data = await _read_upload_with_limit(file, settings.max_upload_bytes, request)
 
     with TemporaryDirectory(prefix="oemer_process_") as tmp_dir:
         tmp_root = Path(tmp_dir)

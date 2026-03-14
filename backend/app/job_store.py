@@ -52,15 +52,16 @@ class JobStore:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Atomic write: write to a temp file then rename so a crash mid-write
             # never leaves a partially written job.json.
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-            os.replace(tmp, path)
+            temp_path = path.with_suffix(f"{path.suffix}.tmp")
+            temp_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+            os.replace(temp_path, path)
 
     def load(self, job_id: str) -> JobRecord:
         path = self.job_dir(job_id) / "job.json"
         if not path.exists():
             raise OMRException("JOB_NOT_FOUND", f"Job '{job_id}' not found", "lookup", 404)
-        return JobRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        with self._lock:
+            return JobRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     def write_summary(self, job_id: str, summary: dict) -> str:
         rel = "summary.json"

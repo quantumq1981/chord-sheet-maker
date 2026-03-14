@@ -152,19 +152,18 @@ describe('metadata extraction', () => {
 // ─── 10. Unknown chord kind — raw-value fallback ──────────────────────────────
 
 describe('unknown chord kind fallback', () => {
-  it('unknown kind value falls back to the raw XML string (known accuracy gap)', () => {
+  it('unknown kind value defaults to major and does not leak raw XML string', () => {
     // "dominant-suspended-fourth" is a valid MusicXML 4.0 kind but not in
-    // KIND_SUFFIX_MAP.  The converter currently emits the raw value verbatim.
-    // This test documents the current (imperfect) behaviour so any accidental
-    // change to the fallback is caught immediately.
+    // KIND_SUFFIX_MAP.  The converter logs a warning and defaults to major so
+    // the chord is still emitted rather than producing garbage output.
     const xml = scoreXml(
       `<harmony><root><root-step>C</root-step></root><kind>dominant-suspended-fourth</kind></harmony>`
     );
-    const { chordPro, warnings } = convert(xml);
-    // The chord appears with the raw kind value appended to the root.
-    expect(chordPro).toContain('Cdominant-suspended-fourth');
-    // No error — the converter should continue gracefully.
-    expect(warnings).not.toContain('MusicXML parser error');
+    const { chordPro } = convert(xml);
+    // The chord root appears (defaulted to major = no suffix).
+    expect(chordPro).toContain('[C]');
+    // The raw XML kind string must NOT appear in the output.
+    expect(chordPro).not.toContain('dominant-suspended-fourth');
   });
 
   it('kind element with a text attribute takes priority over kind value', () => {
