@@ -68,7 +68,7 @@ type ExportFeedback = {
   message: string;
 };
 
-type ChordProModeUi = 'auto' | 'lyrics-inline' | 'grid-only';
+type ChordProModeUi = 'auto' | 'lyrics-inline' | 'grid-only' | 'fakebook';
 type ChordProBracketUi = 'separate' | 'combined';
 type ChordProRepeatUi = 'none' | 'simple-unroll';
 
@@ -355,7 +355,7 @@ function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics:
 function buildChordProOptionsFromUI(uiState: ChordProUiState) {
   const defaultOptions = getDefaultConvertOptions();
   const formatModeMap: Record<ChordProModeUi, ChordProFormatMode> = {
-    auto: 'auto', 'lyrics-inline': 'lyrics-inline', 'grid-only': 'grid-only',
+    auto: 'auto', 'lyrics-inline': 'lyrics-inline', 'grid-only': 'grid-only', fakebook: 'fakebook',
   };
   const bracketStyleMap: Record<ChordProBracketUi, ChordBracketStyle> = {
     separate: 'separate', combined: 'combined',
@@ -1360,6 +1360,7 @@ export default function App() {
                   <option value="auto">Auto</option>
                   <option value="lyrics-inline">Lyrics Inline</option>
                   <option value="grid-only">Grid Only</option>
+                  <option value="fakebook">Fake Book</option>
                 </select>
                 <label className="export-label" htmlFor="chordpro-brackets">Chord bracket style</label>
                 <select id="chordpro-brackets" value={chordProUi.chordBracketStyle}
