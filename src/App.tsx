@@ -854,7 +854,7 @@ export default function App() {
     try {
       if (omrMode === 'sync') {
         setOmrJobId('sync');
-        setOmrJobStatus('running_audiveris');
+        setOmrJobStatus('running_omr');
         setOmrProgressMessage('Running quick process...');
         const response = await postSyncProcess(omrFile);
         if (response.status !== 'completed') {
