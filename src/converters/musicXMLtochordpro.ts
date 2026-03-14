@@ -261,7 +261,7 @@ export function convertMusicXmlToChordPro(
     const selectedLyricPartId = selectLyricPart(xmlDoc);
     diagnostics.selectedLyricPartId = selectedLyricPartId;
 
-    const measures = buildMeasureData(xmlDoc, selectedLyricPartId);
+    const measures = buildMeasureData(xmlDoc, selectedLyricPartId, warnings);
     diagnostics.measuresCount = measures.length;
 
     const verseSet = new Set<string>();
@@ -413,6 +413,7 @@ function selectLyricPart(xmlDoc: Document): string | undefined {
 function buildMeasureData(
   xmlDoc: Document,
   selectedLyricPartId: string | undefined,
+  warnings: string[],
 ): MeasureData[] {
   const parts = [...xmlDoc.querySelectorAll("score-partwise > part")];
   const lyricPart = parts.find((part) => part.getAttribute("id") === selectedLyricPartId) ?? parts[0];
@@ -483,7 +484,7 @@ function buildMeasureData(
       events.sort((a, b) => a.offsetDivisions - b.offsetDivisions);
     });
 
-    const harmonies = collectHarmoniesForMeasure(allPartsMeasures, measureIndex, divisions);
+    const harmonies = collectHarmoniesForMeasure(allPartsMeasures, measureIndex, divisions, warnings);
 
     const repeatStart = [...measureEl.querySelectorAll("barline repeat")]
       .some((repeat) => (repeat.getAttribute("direction") ?? "") === "forward");
@@ -673,7 +674,8 @@ function renderSingleMeasureLyrics(
 function collectHarmoniesForMeasure(
   allPartsMeasures: Element[][],
   measureIndex: number,
-  divisions: number
+  divisions: number,
+  warnings: string[]
 ): HarmonyEvent[] {
   const dedupe = new Map<string, HarmonyEvent>();
 
@@ -698,7 +700,7 @@ function collectHarmoniesForMeasure(
         const offset = offsetRaw != null
           ? Math.max(0, Math.round(parseFloat(offsetRaw) * divisions))
           : cursor;
-        const chordText = harmonyToChordText(child);
+        const chordText = harmonyToChordText(child, warnings);
         if (!chordText) {
           continue;
         }
@@ -717,7 +719,7 @@ function collectHarmoniesForMeasure(
   return [...dedupe.values()].sort((a, b) => a.offsetDivisions - b.offsetDivisions);
 }
 
-function harmonyToChordText(harmonyEl: Element): string {
+function harmonyToChordText(harmonyEl: Element, warnings: string[]): string {
   const rootStep = harmonyEl.querySelector(":scope > root > root-step")?.textContent?.trim() ?? "";
   if (!rootStep) {
     return "";
@@ -728,7 +730,20 @@ function harmonyToChordText(harmonyEl: Element): string {
   const kindEl = harmonyEl.querySelector(":scope > kind");
   const kindText = kindEl?.getAttribute("text")?.trim();
   const kindValue = kindEl?.textContent?.trim() ?? "major";
-  const suffix = kindText && kindText.length > 0 ? kindText : (KIND_SUFFIX_MAP[kindValue] ?? kindValue);
+  const normalizedKind = kindValue.toLowerCase();
+  let suffix = "";
+
+  if (kindText && kindText.length > 0) {
+    suffix = kindText;
+  } else if (Object.prototype.hasOwnProperty.call(KIND_SUFFIX_MAP, normalizedKind)) {
+    suffix = KIND_SUFFIX_MAP[normalizedKind];
+  } else {
+    const warning = `unknown chord kind '${kindValue}' defaulted to major`;
+    if (!warnings.includes(warning)) {
+      warnings.push(warning);
+    }
+    console.warn(`[musicXMLtochordpro] ${warning}`);
+  }
 
   const bassStep = harmonyEl.querySelector(":scope > bass > bass-step")?.textContent?.trim();
   const bassAlter = parseIntText(harmonyEl.querySelector(":scope > bass > bass-alter")?.textContent, 0);
