@@ -38,7 +38,7 @@ class JobStore:
             status=JobStatus.queued,
             createdAt=now,
             updatedAt=now,
-            worker={"engine": "audiveris", "version": "unknown"},
+            worker={"engine": "oemer", "version": "unknown"},
             artifacts={},
             result={},
         )
@@ -50,6 +50,8 @@ class JobStore:
             record.updatedAt = utc_now()
             path = self.job_dir(record.jobId) / "job.json"
             path.parent.mkdir(parents=True, exist_ok=True)
+            # Atomic write: write to a temp file then rename so a crash mid-write
+            # never leaves a partially written job.json.
             temp_path = path.with_suffix(f"{path.suffix}.tmp")
             temp_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
             os.replace(temp_path, path)
@@ -70,6 +72,8 @@ class JobStore:
     def resolve_artifact_path(self, job_id: str, artifact_rel_path: str) -> Path:
         path = (self.job_dir(job_id) / artifact_rel_path).resolve()
         job_root = self.job_dir(job_id).resolve()
+        # Use is_relative_to() so that a sibling directory whose name starts
+        # with the job ID does not falsely pass a string prefix check.
         if not path.is_relative_to(job_root):
             raise OMRException("INTERNAL_SERVER_ERROR", "Artifact path escaped job directory", "artifact", 500)
         return path

@@ -3,7 +3,7 @@ export type OMRProcessingMode = 'sync' | 'async';
 export type OmrJobStatus =
   | 'queued'
   | 'preprocessing'
-  | 'running_audiveris'
+  | 'running_omr'
   | 'parsing_output'
   | 'completed'
   | 'failed';
