@@ -231,7 +231,116 @@ describe('repeat unroll', () => {
   });
 });
 
-// ─── 13. Malformed XML ────────────────────────────────────────────────────────
+// ─── 13. Fake Book format ─────────────────────────────────────────────────────
+
+describe('fakebook format', () => {
+  it('emits a header block with Title and Key', () => {
+    const meta = `
+      <work><work-title>Blues Head</work-title></work>`;
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  ${meta}
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>-2</fifths><mode>major</mode></key>
+      </attributes>
+      ${harmonyXml('Bb', 'dominant')}
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    expect(chordPro).toContain('Title: Blues Head');
+    expect(chordPro).toContain('Key: Bb');
+  });
+
+  it('does not emit ChordPro {title:} directive in fakebook mode', () => {
+    const xml = scoreXml(harmonyXml('C', 'major'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    expect(chordPro).not.toMatch(/\{title:/);
+  });
+
+  it('uses _ to join multiple chords in a measure', () => {
+    // Two harmony events in one measure at different offsets
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>2</divisions></attributes>
+      <harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note>
+      <harmony><root><root-step>G</root-step></root><kind>dominant</kind></harmony>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    expect(chordPro).toContain('C_G7');
+  });
+
+  it('emits % for a bar that repeats the previous bar', () => {
+    const measures = ['C', 'C'].map((note, i) => `
+      <measure number="${i + 1}">
+        <attributes><divisions>1</divisions></attributes>
+        ${harmonyXml(note, 'major')}
+      </measure>`).join('\n');
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measures}</part>
+</score-partwise>`;
+
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', barsPerLine: 4 });
+    // Second bar is same chord — should be %
+    expect(chordPro).toContain('C %');
+  });
+
+  it('wraps bars at barsPerLine', () => {
+    const measures = ['C', 'Am', 'F', 'G', 'C', 'Am'].map((note, i) => `
+      <measure number="${i + 1}">
+        <attributes><divisions>1</divisions></attributes>
+        ${harmonyXml(note, 'major')}
+      </measure>`).join('\n');
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measures}</part>
+</score-partwise>`;
+
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', barsPerLine: 4 });
+    const rows = chordPro.split('\n').filter((l) => l.includes('C') || l.includes('Am'));
+    // 6 bars at 4/line → 2 rows
+    expect(rows.length).toBe(2);
+  });
+
+  it('adds |: and :| repeat markers', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      ${harmonyXml('G', 'dominant')}
+      <barline location="right"><bar-style>light-heavy</bar-style><repeat direction="backward"/></barline>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', barsPerLine: 4 });
+    expect(chordPro).toContain('|:');
+    expect(chordPro).toContain(':|');
+  });
+});
+
+// ─── 14. Malformed XML ────────────────────────────────────────────────────────
 
 describe('error handling', () => {
   it('returns an error string for unparseable XML without throwing', () => {

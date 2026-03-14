@@ -5,6 +5,7 @@ export type PageSize = "letter" | "a4";
 export type ChordProFormatMode =
   | "lyrics-inline"
   | "grid-only"
+  | "fakebook"
   | "auto";
 
 export type RepeatStrategy =
@@ -79,7 +80,7 @@ export interface ConverterDiagnostics {
   repeatMarkersFound: number;
   endingsFound: number;
   barsPerLine: number;
-  formatModeResolved: "lyrics-inline" | "grid-only";
+  formatModeResolved: "lyrics-inline" | "grid-only" | "fakebook";
 }
 
 export interface HarmonyEvent {
@@ -305,12 +306,12 @@ export function convertMusicXmlToChordPro(
     if (!hasAnyHarmony) {
       warnings.push("no harmony found");
     }
-    if (!hasAnyLyrics && formatModeResolved !== "grid-only") {
+    if (!hasAnyLyrics && formatModeResolved !== "grid-only" && formatModeResolved !== "fakebook") {
       warnings.push("no lyrics found");
     }
 
     const lines: string[] = [];
-    if (mergedOptions.metadataPolicy === "emit") {
+    if (mergedOptions.metadataPolicy === "emit" && formatModeResolved !== "fakebook") {
       if (metadata.title) {
         lines.push(`{title: ${metadata.title}}`);
       }
@@ -332,6 +333,8 @@ export function convertMusicXmlToChordPro(
         lines.push("");
       }
       lines.push(...rendered);
+    } else if (formatModeResolved === "fakebook") {
+      lines.push(...renderFakebook(orderedMeasures, metadata, mergedOptions));
     } else {
       const rendered = renderGrid(orderedMeasures, mergedOptions, warnings, metadata.time);
       if (lines.length > 0 && rendered.length > 0) {
@@ -505,6 +508,64 @@ function buildMeasureData(
   });
 
   return result;
+}
+
+function renderFakebook(
+  measures: MeasureData[],
+  metadata: ParsedMetadata,
+  options: ConvertOptions,
+): string[] {
+  const lines: string[] = [];
+
+  // Header block
+  if (metadata.title) lines.push(`Title: ${metadata.title}`);
+  lines.push("Style:");
+  if (metadata.time) lines.push(`Time: ${metadata.time}`);
+  if (metadata.key) lines.push(`Key: ${metadata.key}`);
+  lines.push("");
+
+  // Build a bar token per measure
+  let prevChordToken = "";
+  const barTokens: Array<{ token: string; repeatStart: boolean; repeatEnd: boolean }> = [];
+
+  for (const measure of measures) {
+    const chords = [...measure.harmonies]
+      .sort((a, b) => a.offsetDivisions - b.offsetDivisions)
+      .map((h) => h.chordText);
+
+    let token: string;
+    if (chords.length === 0) {
+      // Empty measure — treat as a repeat of the previous bar
+      token = "%";
+    } else {
+      const joined = chords.join("_");
+      token = joined === prevChordToken ? "%" : joined;
+      if (token !== "%") {
+        prevChordToken = joined;
+      }
+    }
+
+    barTokens.push({
+      token,
+      repeatStart: measure.repeatStart ?? false,
+      repeatEnd: measure.repeatEnd ?? false,
+    });
+  }
+
+  // Group bars into rows of barsPerLine
+  const barsPerLine = Math.max(1, Math.floor(options.barsPerLine || 4));
+
+  for (let i = 0; i < barTokens.length; i += barsPerLine) {
+    const chunk = barTokens.slice(i, i + barsPerLine);
+    const hasRepeatStart = chunk.some((b) => b.repeatStart);
+    const hasRepeatEnd = chunk.some((b) => b.repeatEnd);
+    let row = chunk.map((b) => b.token).join(" ");
+    if (hasRepeatStart) row = "|: " + row;
+    if (hasRepeatEnd) row = row + " :|";
+    lines.push(row);
+  }
+
+  return lines;
 }
 
 function renderLyricsInline(
