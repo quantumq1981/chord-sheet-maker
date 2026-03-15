@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { parseChordSymbol, parsedChordToText } from "./chordSymbolParser";
 
 export type PageSize = "letter" | "a4";
 
@@ -63,6 +64,13 @@ export interface ConvertOutput {
   diagnostics: ConverterDiagnostics;
 }
 
+export interface PartInfo {
+  id: string;
+  name: string;
+  harmonyCount: number;
+  lyricCount: number;
+}
+
 export interface FakebookStats {
   measuresTotal: number;
   /** Measures reduced to a single chord token */
@@ -96,6 +104,16 @@ export interface ConverterDiagnostics {
   barsPerLine: number;
   formatModeResolved: "lyrics-inline" | "grid-only" | "fakebook";
   fakebookStats?: FakebookStats;
+  /** 'partwise' = native; 'timewise-converted' = was score-timewise, transposed in-memory */
+  scoreFormat?: "partwise" | "timewise-converted";
+  /** Per-part harmony and lyric counts — useful for diagnosing multi-part files */
+  partsInfo?: PartInfo[];
+  /** Total harmony events collected across all measures (after deduplication) */
+  harmoniesCollected?: number;
+  /** Count of <direction><words> elements that look like chord symbols */
+  directionWordsFound?: number;
+  /** How many of those were actually inferred as chords (only set when inference ran) */
+  inferredHarmoniesCount?: number;
 }
 
 export interface HarmonyEvent {
@@ -268,17 +286,38 @@ export function convertMusicXmlToChordPro(
   }
 
   try {
-    const metadata = parseMetadata(xmlDoc);
+    // ── score-timewise → score-partwise transposition ──────────────────────
+    const { doc: resolvedDoc, scoreFormat } = convertTimewiseToPartwise(xmlDoc);
+    diagnostics.scoreFormat = scoreFormat;
+    if (scoreFormat === "timewise-converted") {
+      warnings.push("score-timewise format detected — converted to score-partwise for processing");
+    }
+
+    const metadata = parseMetadata(resolvedDoc);
     diagnostics.title = metadata.title;
     diagnostics.composer = metadata.composer;
     diagnostics.key = metadata.key;
     diagnostics.time = metadata.time;
 
-    const selectedLyricPartId = selectLyricPart(xmlDoc);
+    // ── Per-part info ──────────────────────────────────────────────────────
+    diagnostics.partsInfo = collectPartsInfo(resolvedDoc);
+    diagnostics.directionWordsFound = countDirectionChordHints(resolvedDoc);
+
+    const selectedLyricPartId = selectLyricPart(resolvedDoc);
     diagnostics.selectedLyricPartId = selectedLyricPartId;
 
-    const measures = buildMeasureData(xmlDoc, selectedLyricPartId, warnings);
+    // Use direction/words inference when the file has no <harmony> elements
+    // but does have chord-like direction/words (e.g. Finale-exported XML).
+    const totalDocHarmonies = resolvedDoc.querySelectorAll("harmony").length;
+    const inferFromDirectionWords =
+      totalDocHarmonies === 0 && (diagnostics.directionWordsFound ?? 0) > 0;
+
+    const measures = buildMeasureData(resolvedDoc, selectedLyricPartId, warnings, inferFromDirectionWords);
     diagnostics.measuresCount = measures.length;
+    diagnostics.harmoniesCollected = measures.reduce((s, m) => s + m.harmonies.length, 0);
+    if (inferFromDirectionWords) {
+      diagnostics.inferredHarmoniesCount = diagnostics.harmoniesCollected;
+    }
 
     const verseSet = new Set<string>();
     let hasAnyLyrics = false;
@@ -319,7 +358,24 @@ export function convertMusicXmlToChordPro(
     diagnostics.formatModeResolved = formatModeResolved;
 
     if (!hasAnyHarmony) {
-      warnings.push("no harmony found");
+      const inferred = diagnostics.inferredHarmoniesCount ?? 0;
+      if (inferred > 0) {
+        // Direction/words inference ran and found chords — not a failure, just informational
+        warnings.push(
+          `${inferred} chord${inferred === 1 ? "" : "s"} inferred from direction/words elements ` +
+          `(Finale-style encoding). Re-export from MuseScore for more reliable results.`,
+        );
+      } else {
+        warnings.push("no harmony found");
+        const dirWords = diagnostics.directionWordsFound ?? 0;
+        if (dirWords > 0) {
+          warnings.push(
+            `${dirWords} direction/words element${dirWords === 1 ? "" : "s"} found that ` +
+            `resemble chord symbols but could not be parsed. ` +
+            `Re-export from MuseScore or Sibelius to get <harmony> elements.`,
+          );
+        }
+      }
     }
     if (!hasAnyLyrics && formatModeResolved !== "grid-only" && formatModeResolved !== "fakebook") {
       warnings.push("no lyrics found");
@@ -389,6 +445,116 @@ export function convertMusicXmlToChordPro(
   }
 }
 
+// ─── Compatibility helpers ────────────────────────────────────────────────────
+
+/**
+ * If the document root is <score-timewise>, transpose it in-memory to
+ * <score-partwise> so the rest of the parser can operate normally.
+ *
+ * score-timewise: <measure number="1"><part id="P1">…</part></measure>
+ * score-partwise: <part id="P1"><measure number="1">…</measure></part>
+ */
+function convertTimewiseToPartwise(
+  xmlDoc: Document
+): { doc: Document; scoreFormat: "partwise" | "timewise-converted" } {
+  if (xmlDoc.documentElement.nodeName !== "score-timewise") {
+    return { doc: xmlDoc, scoreFormat: "partwise" };
+  }
+
+  const root = xmlDoc.documentElement;
+  const allTimeMeasures = [...root.querySelectorAll(":scope > measure")];
+  if (allTimeMeasures.length === 0) {
+    return { doc: xmlDoc, scoreFormat: "partwise" };
+  }
+
+  // Collect part IDs from the first measure
+  const partIds = [...allTimeMeasures[0].querySelectorAll(":scope > part")]
+    .map((p) => p.getAttribute("id") ?? "")
+    .filter(Boolean);
+  if (partIds.length === 0) {
+    return { doc: xmlDoc, scoreFormat: "partwise" };
+  }
+
+  const serializer = new XMLSerializer();
+  const version = root.getAttribute("version") ?? "4.0";
+
+  // Serialize header elements (everything before the first <measure>)
+  const headerXml: string[] = [];
+  for (const child of [...root.children]) {
+    if (child.tagName === "measure") break;
+    headerXml.push(serializer.serializeToString(child));
+  }
+
+  // Build one <part> per part ID, containing all its measures in order
+  const partsXml = partIds.map((partId) => {
+    const escapedId = partId.replace(/"/g, "&quot;");
+    const measureXmls = allTimeMeasures.map((timeMeasure) => {
+      const partEl = [...timeMeasure.querySelectorAll(":scope > part")]
+        .find((p) => p.getAttribute("id") === partId);
+      if (!partEl) return "";
+      const attrs = [...timeMeasure.attributes]
+        .map((a) => ` ${a.name}="${a.value.replace(/"/g, "&quot;")}"`)
+        .join("");
+      const innerXml = [...partEl.children]
+        .map((c) => serializer.serializeToString(c))
+        .join("");
+      return `<measure${attrs}>${innerXml}</measure>`;
+    });
+    return `<part id="${escapedId}">${measureXmls.join("")}</part>`;
+  });
+
+  const partwiseXml =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<score-partwise version="${version}">` +
+    headerXml.join("") +
+    partsXml.join("") +
+    `</score-partwise>`;
+
+  const newDoc = new DOMParser().parseFromString(partwiseXml, "application/xml");
+  if (newDoc.querySelector("parsererror")) {
+    // Conversion failed; fall back to original (will produce empty output but no crash)
+    return { doc: xmlDoc, scoreFormat: "partwise" };
+  }
+  return { doc: newDoc, scoreFormat: "timewise-converted" };
+}
+
+/** Collect harmony and lyric counts per part for diagnostic purposes. */
+function collectPartsInfo(xmlDoc: Document): PartInfo[] {
+  const partNameMap = new Map<string, string>();
+  for (const scorePartEl of xmlDoc.querySelectorAll("part-list > score-part")) {
+    const id = scorePartEl.getAttribute("id") ?? "";
+    const name = scorePartEl.querySelector("part-name")?.textContent?.trim() || id;
+    partNameMap.set(id, name);
+  }
+  return [...xmlDoc.querySelectorAll("score-partwise > part")].map((part) => {
+    const id = part.getAttribute("id") ?? "";
+    return {
+      id,
+      name: partNameMap.get(id) ?? id,
+      harmonyCount: part.querySelectorAll("harmony").length,
+      lyricCount: part.querySelectorAll("lyric text").length,
+    };
+  });
+}
+
+/**
+ * Count <direction-type><words> elements whose text matches a chord-symbol
+ * pattern. Useful for detecting Finale-style files that encode chords as
+ * direction/words rather than <harmony> elements.
+ */
+const CHORD_WORDS_RE = /^[A-G][#b]?(?:m|M|maj|min|dim|aug|sus|add|\d|[+°ø]){0,12}(?:\/[A-G][#b]?)?$/;
+
+function countDirectionChordHints(xmlDoc: Document): number {
+  let count = 0;
+  for (const el of xmlDoc.querySelectorAll("direction-type > words")) {
+    const text = (el.textContent ?? "").trim();
+    if (CHORD_WORDS_RE.test(text)) count++;
+  }
+  return count;
+}
+
+// ─── Metadata / part selection ────────────────────────────────────────────────
+
 function parseMetadata(xmlDoc: Document): ParsedMetadata {
   const title = textAt(xmlDoc, "work > work-title") ?? textAt(xmlDoc, "movement-title");
 
@@ -434,6 +600,7 @@ function buildMeasureData(
   xmlDoc: Document,
   selectedLyricPartId: string | undefined,
   warnings: string[],
+  inferFromDirectionWords = false,
 ): MeasureData[] {
   const parts = [...xmlDoc.querySelectorAll("score-partwise > part")];
   const lyricPart = parts.find((part) => part.getAttribute("id") === selectedLyricPartId) ?? parts[0];
@@ -504,7 +671,7 @@ function buildMeasureData(
       events.sort((a, b) => a.offsetDivisions - b.offsetDivisions);
     });
 
-    const harmonies = collectHarmoniesForMeasure(allPartsMeasures, measureIndex, divisions, warnings);
+    const harmonies = collectHarmoniesForMeasure(allPartsMeasures, measureIndex, divisions, warnings, inferFromDirectionWords);
 
     const repeatStart = [...measureEl.querySelectorAll("barline repeat")]
       .some((repeat) => (repeat.getAttribute("direction") ?? "") === "forward");
@@ -876,7 +1043,8 @@ function collectHarmoniesForMeasure(
   allPartsMeasures: Element[][],
   measureIndex: number,
   divisions: number,
-  warnings: string[]
+  warnings: string[],
+  inferFromDirectionWords = false,
 ): HarmonyEvent[] {
   const dedupe = new Map<string, HarmonyEvent>();
 
@@ -913,6 +1081,23 @@ function collectHarmoniesForMeasure(
             chordText,
           });
         }
+      } else if (inferFromDirectionWords && child.tagName === "direction") {
+        // Fallback: parse <direction-type><words> as chord symbols when the file
+        // has no <harmony> elements (e.g. Finale-exported files).
+        const wordsEl = child.querySelector("direction-type > words");
+        const text = (wordsEl?.textContent ?? "").trim();
+        if (!text) continue;
+        const parsed = parseChordSymbol(text);
+        if (!parsed) continue;
+        const offsetEl = child.querySelector(":scope > offset");
+        const offset = offsetEl
+          ? Math.max(0, Math.round(parseFloat(offsetEl.textContent ?? "0") * divisions))
+          : cursor;
+        const chordText = parsedChordToText(parsed);
+        const key = `${offset}__${chordText}`;
+        if (!dedupe.has(key)) {
+          dedupe.set(key, { measureIndex, offsetDivisions: offset, chordText });
+        }
       }
     }
   }
@@ -923,6 +1108,8 @@ function collectHarmoniesForMeasure(
 function harmonyToChordText(harmonyEl: Element, warnings: string[]): string {
   const rootStep = harmonyEl.querySelector(":scope > root > root-step")?.textContent?.trim() ?? "";
   if (!rootStep) {
+    const w = "harmony element dropped: missing <root><root-step>";
+    if (!warnings.includes(w)) warnings.push(w);
     return "";
   }
   const rootAlter = parseIntText(harmonyEl.querySelector(":scope > root > root-alter")?.textContent, 0);

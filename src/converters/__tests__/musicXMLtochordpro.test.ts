@@ -428,7 +428,158 @@ describe('fakebook format', () => {
   });
 });
 
-// ─── 14. Malformed XML ────────────────────────────────────────────────────────
+// ─── 14. Robustness / compatibility ──────────────────────────────────────────
+
+describe('score-timewise transposition', () => {
+  // Minimal score-timewise fixture: 1 measure, 1 part, one harmony event
+  const timewiseXml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-timewise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Music</part-name></score-part>
+  </part-list>
+  <measure number="1">
+    <part id="P1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths><mode>major</mode></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+      </attributes>
+      <harmony>
+        <root><root-step>C</root-step></root>
+        <kind>dominant</kind>
+      </harmony>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+    </part>
+  </measure>
+  <measure number="2">
+    <part id="P1">
+      <harmony>
+        <root><root-step>F</root-step></root>
+        <kind>major</kind>
+      </harmony>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration></note>
+    </part>
+  </measure>
+</score-timewise>`;
+
+  it('converts score-timewise to partwise and extracts chords', () => {
+    const { chordPro, warnings, diagnostics } = convert(timewiseXml, { formatMode: 'fakebook' });
+    expect(chordPro).toContain('C7');
+    expect(chordPro).toContain('F');
+    expect(diagnostics.scoreFormat).toBe('timewise-converted');
+    expect(warnings.some((w) => w.includes('score-timewise'))).toBe(true);
+  });
+
+  it('sets measuresCount correctly after transposition', () => {
+    const { diagnostics } = convert(timewiseXml);
+    expect(diagnostics.measuresCount).toBe(2);
+  });
+});
+
+describe('direction/words chord-hint detection', () => {
+  const dirWordsXml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <direction placement="above">
+        <direction-type><words>Bb7</words></direction-type>
+      </direction>
+      <direction placement="above">
+        <direction-type><words>Eb7</words></direction-type>
+      </direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+  it('counts direction/words chord hints when no <harmony> elements exist', () => {
+    const { diagnostics, warnings } = convert(dirWordsXml);
+    expect(diagnostics.directionWordsFound).toBe(2);
+    // When inference succeeds, the warning mentions "inferred"; when it fails entirely
+    // (e.g. unparseable text), it says "direction/words". Either way, a warning fires.
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('infers chords from direction/words into the chord output', () => {
+    const { chordPro, diagnostics } = convert(dirWordsXml, { formatMode: 'fakebook' });
+    expect(diagnostics.inferredHarmoniesCount).toBeGreaterThanOrEqual(1);
+    expect(chordPro).toMatch(/Bb7|Eb7/);
+  });
+});
+
+describe('per-part diagnostics', () => {
+  it('reports partsInfo with harmony and lyric counts', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Melody</part-name></score-part>
+    <score-part id="P2"><part-name>Chords</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration>
+        <lyric><text>la</text></lyric>
+      </note>
+    </measure>
+  </part>
+  <part id="P2">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${harmonyXml('C', 'major')}
+      <note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { diagnostics } = convert(xml);
+    expect(diagnostics.partsInfo).toHaveLength(2);
+    const melodyPart = diagnostics.partsInfo!.find((p) => p.id === 'P1');
+    const chordPart = diagnostics.partsInfo!.find((p) => p.id === 'P2');
+    expect(melodyPart?.lyricCount).toBe(1);
+    expect(melodyPart?.harmonyCount).toBe(0);
+    expect(chordPart?.harmonyCount).toBe(1);
+  });
+});
+
+describe('missing root-step warning', () => {
+  it('warns when a harmony element has no root-step', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <harmony><kind>dominant</kind></harmony>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { warnings } = convert(xml);
+    expect(warnings.some((w) => w.includes('root-step'))).toBe(true);
+  });
+});
+
+describe('harmoniesCollected diagnostic', () => {
+  it('counts total harmony events collected across all measures', () => {
+    const measuresXml = ['C', 'F', 'G'].map((note, i) => `
+      <measure number="${i + 1}">
+        <attributes><divisions>1</divisions></attributes>
+        ${harmonyXml(note, 'major')}
+        <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+      </measure>`).join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measuresXml}</part>
+</score-partwise>`;
+    const { diagnostics } = convert(xml);
+    expect(diagnostics.harmoniesCollected).toBe(3);
+  });
+});
+
+// ─── 15. Malformed XML ────────────────────────────────────────────────────────
 
 describe('error handling', () => {
   it('returns an error string for unparseable XML without throwing', () => {
