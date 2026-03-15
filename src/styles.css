@@ -318,6 +318,38 @@ select:disabled {
   color: #7e22ce;
 }
 
+/* ── Reducibility badge ───────────────────────────────────────────────────── */
+
+.reducibility-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.reducibility-badge--high {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #15803d;
+}
+
+.reducibility-badge--medium {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.reducibility-badge--low {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
 /* ── Transpose controls ───────────────────────────────────────────────────── */
 
 .transpose-row {

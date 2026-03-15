@@ -1,5 +1,11 @@
 import JSZip from "jszip";
 import { parseChordSymbol, parsedChordToText } from "./chordSymbolParser";
+import {
+  analyzeXmlIntake,
+  getReductionStrategy,
+  XmlIntakeAnalysis,
+  ReductionStrategy,
+} from "./xmlIntakeAnalyzer";
 
 export type PageSize = "letter" | "a4";
 
@@ -129,6 +135,8 @@ export interface ConverterDiagnostics {
   keyFifths?: number;
   /** Enharmonic style actually applied to chord tokens */
   enharmonicStyleApplied?: "flats" | "sharps";
+  /** Full XML intake analysis — populated after measure data is collected */
+  xmlIntake?: XmlIntakeAnalysis;
 }
 
 export interface HarmonyEvent {
@@ -170,6 +178,8 @@ interface ParsedMetadata {
   time?: string;
   /** Raw circle-of-fifths from <key><fifths> — used for enharmonic normalization */
   fifths?: number;
+  /** Key mode (e.g. "major", "minor") — used for tonal context scoring */
+  mode?: string;
 }
 
 const KIND_SUFFIX_MAP: Record<string, string> = {
@@ -369,6 +379,36 @@ export function convertMusicXmlToChordPro(
     diagnostics.repeatMarkersFound = repeatMarkersFound;
     diagnostics.endingsFound = endingsFound;
 
+    // ── XML Intake Analysis ────────────────────────────────────────────────
+    const malformedHarmonyCount = resolvedDoc.querySelectorAll("harmony").length > 0
+      ? Array.from(resolvedDoc.querySelectorAll("harmony")).filter(
+          (h) => !h.querySelector("root > root-step"),
+        ).length
+      : 0;
+
+    const measureSummaries = measures.map((m) => ({
+      harmonyCount: inferFromDirectionWords ? 0 : m.harmonies.length,
+      inferredHarmonyCount: inferFromDirectionWords ? m.harmonies.length : 0,
+      durationDivisions: m.durationDivisions,
+    }));
+
+    const intakeAnalysis = analyzeXmlIntake({
+      xmlDoc: resolvedDoc,
+      hadParseError: false,
+      scoreFormat,
+      measureSummaries,
+      malformedHarmonyCount,
+      repeatMarkersFound,
+      endingsFound,
+      title: metadata.title,
+      composer: metadata.composer,
+      keyFifths: metadata.fifths,
+      mode: metadata.mode,
+    });
+    diagnostics.xmlIntake = intakeAnalysis;
+
+    const reductionStrategy = getReductionStrategy(intakeAnalysis.reducibilityClass);
+
     const measureOrder = resolveMeasureOrder(measures, mergedOptions, warnings, diagnostics);
     const orderedMeasures = measureOrder.map((i) => measures[i]).filter((m): m is MeasureData => Boolean(m));
 
@@ -426,7 +466,7 @@ export function convertMusicXmlToChordPro(
       lines.push(...rendered);
     } else if (formatModeResolved === "fakebook") {
       const { lines: fbLines, stats: fbStats, enharmonicStyleApplied } =
-        renderFakebook(orderedMeasures, metadata, mergedOptions);
+        renderFakebook(orderedMeasures, metadata, mergedOptions, reductionStrategy);
       lines.push(...fbLines);
       diagnostics.fakebookStats = fbStats;
       diagnostics.enharmonicStyleApplied = enharmonicStyleApplied;
@@ -602,6 +642,7 @@ function parseMetadata(xmlDoc: Document): ParsedMetadata {
     key,
     time,
     fifths,
+    mode: modeRaw?.trim() || undefined,
   };
 }
 
@@ -755,6 +796,7 @@ interface FakebookBarToken {
 function reduceMeasureHarmonies(
   harmonies: HarmonyEvent[],
   measureDuration: number,
+  strategy?: ReductionStrategy,
 ): MeasureReduction {
   if (harmonies.length === 0) {
     return { chord: "", chordCount: 0, wasDurationReduced: false };
@@ -762,6 +804,10 @@ function reduceMeasureHarmonies(
   if (harmonies.length === 1) {
     return { chord: harmonies[0].chordText, chordCount: 1, wasDurationReduced: false };
   }
+
+  const minWeight      = strategy?.minHarmonyWeight  ?? 0.15;
+  const splitBarMin    = strategy?.splitBarMinRatio   ?? 0.25;
+  const splitBarMax    = strategy?.splitBarMaxRatio   ?? 0.75;
 
   // Effective duration: prefer the declared measure duration; fall back to
   // the position just past the last harmony event.
@@ -780,9 +826,8 @@ function reduceMeasureHarmonies(
     ),
   }));
 
-  // Drop ornamental events (< 15 % of measure)
-  const MIN_WEIGHT = 0.15;
-  const significant = withDuration.filter((h) => h.duration / effectiveDuration >= MIN_WEIGHT);
+  // Drop ornamental events (below minWeight threshold)
+  const significant = withDuration.filter((h) => h.duration / effectiveDuration >= minWeight);
   const candidates = significant.length > 0 ? significant : withDuration;
   const dropped = harmonies.length > candidates.length;
 
@@ -801,14 +846,14 @@ function reduceMeasureHarmonies(
   const ratioA = durA / (durA + durB);
   const wasDurationReduced = dropped || candidates.length > 2;
 
-  // Genuine split bar: each half occupies 25–75 % of the combined weight
-  if (ratioA >= 0.25 && ratioA <= 0.75) {
+  // Genuine split bar: each half occupies splitBarMin–splitBarMax of the combined weight
+  if (ratioA >= splitBarMin && ratioA <= splitBarMax) {
     const chord = `${top2[0].chordText}_${top2[1].chordText}`;
     return { chord, chordCount: 2, wasDurationReduced };
   }
 
   // One clearly dominates — emit only the longer one
-  const dominant = ratioA > 0.75 ? top2[0] : top2[1];
+  const dominant = ratioA > splitBarMax ? top2[0] : top2[1];
   return { chord: dominant.chordText, chordCount: 1, wasDurationReduced: true };
 }
 
@@ -914,6 +959,7 @@ function renderFakebook(
   measures: MeasureData[],
   metadata: ParsedMetadata,
   options: ConvertOptions,
+  strategy?: ReductionStrategy,
 ): { lines: string[]; stats: FakebookStats; enharmonicStyleApplied: "flats" | "sharps" } {
   const lines: string[] = [];
 
@@ -946,7 +992,7 @@ function renderFakebook(
 
   for (const measure of measures) {
     const sorted = [...measure.harmonies].sort((a, b) => a.offsetDivisions - b.offsetDivisions);
-    const reduction = reduceMeasureHarmonies(sorted, measure.durationDivisions);
+    const reduction = reduceMeasureHarmonies(sorted, measure.durationDivisions, strategy);
 
     if (reduction.chordCount === 0) {
       stats.empty++;

@@ -1428,6 +1428,17 @@ export default function App() {
 
               {chordProDiagnostics && (
                 <div className="hint-text">
+                  {chordProDiagnostics.xmlIntake && (
+                    <p>
+                      <span
+                        className={`reducibility-badge reducibility-badge--${chordProDiagnostics.xmlIntake.reducibilityClass}`}
+                        title={chordProDiagnostics.xmlIntake.reasons.join(' · ') || undefined}
+                      >
+                        {chordProDiagnostics.xmlIntake.reducibilityLabel}
+                        {' '}({chordProDiagnostics.xmlIntake.reducibilityScore}/100)
+                      </span>
+                    </p>
+                  )}
                   <p>
                     Resolved mode: <strong>{chordProDiagnostics.formatModeResolved}</strong>
                     {' · '}Measures: {chordProDiagnostics.measuresCount}
