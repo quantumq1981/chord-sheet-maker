@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { parseChordSymbol, parsedChordToText } from "./chordSymbolParser";
 
 export type PageSize = "letter" | "a4";
 
@@ -111,6 +112,8 @@ export interface ConverterDiagnostics {
   harmoniesCollected?: number;
   /** Count of <direction><words> elements that look like chord symbols */
   directionWordsFound?: number;
+  /** How many of those were actually inferred as chords (only set when inference ran) */
+  inferredHarmoniesCount?: number;
 }
 
 export interface HarmonyEvent {
@@ -303,9 +306,18 @@ export function convertMusicXmlToChordPro(
     const selectedLyricPartId = selectLyricPart(resolvedDoc);
     diagnostics.selectedLyricPartId = selectedLyricPartId;
 
-    const measures = buildMeasureData(resolvedDoc, selectedLyricPartId, warnings);
+    // Use direction/words inference when the file has no <harmony> elements
+    // but does have chord-like direction/words (e.g. Finale-exported XML).
+    const totalDocHarmonies = resolvedDoc.querySelectorAll("harmony").length;
+    const inferFromDirectionWords =
+      totalDocHarmonies === 0 && (diagnostics.directionWordsFound ?? 0) > 0;
+
+    const measures = buildMeasureData(resolvedDoc, selectedLyricPartId, warnings, inferFromDirectionWords);
     diagnostics.measuresCount = measures.length;
     diagnostics.harmoniesCollected = measures.reduce((s, m) => s + m.harmonies.length, 0);
+    if (inferFromDirectionWords) {
+      diagnostics.inferredHarmoniesCount = diagnostics.harmoniesCollected;
+    }
 
     const verseSet = new Set<string>();
     let hasAnyLyrics = false;
@@ -346,14 +358,23 @@ export function convertMusicXmlToChordPro(
     diagnostics.formatModeResolved = formatModeResolved;
 
     if (!hasAnyHarmony) {
-      warnings.push("no harmony found");
-      const dirWords = diagnostics.directionWordsFound ?? 0;
-      if (dirWords > 0) {
+      const inferred = diagnostics.inferredHarmoniesCount ?? 0;
+      if (inferred > 0) {
+        // Direction/words inference ran and found chords — not a failure, just informational
         warnings.push(
-          `${dirWords} direction/words element${dirWords === 1 ? "" : "s"} detected that ` +
-          `may be chord symbols encoded in Finale/older style. ` +
-          `Re-export from MuseScore or Sibelius to get <harmony> elements.`,
+          `${inferred} chord${inferred === 1 ? "" : "s"} inferred from direction/words elements ` +
+          `(Finale-style encoding). Re-export from MuseScore for more reliable results.`,
         );
+      } else {
+        warnings.push("no harmony found");
+        const dirWords = diagnostics.directionWordsFound ?? 0;
+        if (dirWords > 0) {
+          warnings.push(
+            `${dirWords} direction/words element${dirWords === 1 ? "" : "s"} found that ` +
+            `resemble chord symbols but could not be parsed. ` +
+            `Re-export from MuseScore or Sibelius to get <harmony> elements.`,
+          );
+        }
       }
     }
     if (!hasAnyLyrics && formatModeResolved !== "grid-only" && formatModeResolved !== "fakebook") {
@@ -579,6 +600,7 @@ function buildMeasureData(
   xmlDoc: Document,
   selectedLyricPartId: string | undefined,
   warnings: string[],
+  inferFromDirectionWords = false,
 ): MeasureData[] {
   const parts = [...xmlDoc.querySelectorAll("score-partwise > part")];
   const lyricPart = parts.find((part) => part.getAttribute("id") === selectedLyricPartId) ?? parts[0];
@@ -649,7 +671,7 @@ function buildMeasureData(
       events.sort((a, b) => a.offsetDivisions - b.offsetDivisions);
     });
 
-    const harmonies = collectHarmoniesForMeasure(allPartsMeasures, measureIndex, divisions, warnings);
+    const harmonies = collectHarmoniesForMeasure(allPartsMeasures, measureIndex, divisions, warnings, inferFromDirectionWords);
 
     const repeatStart = [...measureEl.querySelectorAll("barline repeat")]
       .some((repeat) => (repeat.getAttribute("direction") ?? "") === "forward");
@@ -1021,7 +1043,8 @@ function collectHarmoniesForMeasure(
   allPartsMeasures: Element[][],
   measureIndex: number,
   divisions: number,
-  warnings: string[]
+  warnings: string[],
+  inferFromDirectionWords = false,
 ): HarmonyEvent[] {
   const dedupe = new Map<string, HarmonyEvent>();
 
@@ -1057,6 +1080,23 @@ function collectHarmoniesForMeasure(
             offsetDivisions: offset,
             chordText,
           });
+        }
+      } else if (inferFromDirectionWords && child.tagName === "direction") {
+        // Fallback: parse <direction-type><words> as chord symbols when the file
+        // has no <harmony> elements (e.g. Finale-exported files).
+        const wordsEl = child.querySelector("direction-type > words");
+        const text = (wordsEl?.textContent ?? "").trim();
+        if (!text) continue;
+        const parsed = parseChordSymbol(text);
+        if (!parsed) continue;
+        const offsetEl = child.querySelector(":scope > offset");
+        const offset = offsetEl
+          ? Math.max(0, Math.round(parseFloat(offsetEl.textContent ?? "0") * divisions))
+          : cursor;
+        const chordText = parsedChordToText(parsed);
+        const key = `${offset}__${chordText}`;
+        if (!dedupe.has(key)) {
+          dedupe.set(key, { measureIndex, offsetDivisions: offset, chordText });
         }
       }
     }

@@ -1413,7 +1413,10 @@ export default function App() {
                     Resolved mode: <strong>{chordProDiagnostics.formatModeResolved}</strong>
                     {' · '}Measures: {chordProDiagnostics.measuresCount}
                     {chordProDiagnostics.harmoniesCollected !== undefined &&
-                      <> · Harmonies collected: {chordProDiagnostics.harmoniesCollected}</>}
+                      <> · Harmonies: {chordProDiagnostics.harmoniesCollected}
+                        {chordProDiagnostics.inferredHarmoniesCount !== undefined &&
+                          <em> (inferred from text)</em>}
+                      </>}
                     {chordProDiagnostics.scoreFormat === 'timewise-converted' &&
                       <> · <em>score-timewise converted</em></>}
                   </p>

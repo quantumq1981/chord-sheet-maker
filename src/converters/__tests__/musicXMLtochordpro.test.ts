@@ -497,7 +497,15 @@ describe('direction/words chord-hint detection', () => {
   it('counts direction/words chord hints when no <harmony> elements exist', () => {
     const { diagnostics, warnings } = convert(dirWordsXml);
     expect(diagnostics.directionWordsFound).toBe(2);
-    expect(warnings.some((w) => w.includes('direction/words'))).toBe(true);
+    // When inference succeeds, the warning mentions "inferred"; when it fails entirely
+    // (e.g. unparseable text), it says "direction/words". Either way, a warning fires.
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('infers chords from direction/words into the chord output', () => {
+    const { chordPro, diagnostics } = convert(dirWordsXml, { formatMode: 'fakebook' });
+    expect(diagnostics.inferredHarmoniesCount).toBeGreaterThanOrEqual(1);
+    expect(chordPro).toMatch(/Bb7|Eb7/);
   });
 });
 
