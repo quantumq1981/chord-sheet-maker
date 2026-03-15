@@ -579,7 +579,160 @@ describe('harmoniesCollected diagnostic', () => {
   });
 });
 
-// ─── 15. Malformed XML ────────────────────────────────────────────────────────
+// ─── 15. Chord token normalization ───────────────────────────────────────────
+
+/** Build a multi-measure fakebook XML with a given key (fifths) and one chord per measure. */
+function fakebookXml(chords: Array<{ step: string; alter?: number; kind: string }>, fifths: number): string {
+  const measures = chords.map((c, i) => `
+    <measure number="${i + 1}">
+      ${i === 0 ? `<attributes><divisions>1</divisions><key><fifths>${fifths}</fifths><mode>major</mode></key></attributes>` : ''}
+      ${harmonyXml(c.step, c.kind, undefined, c.alter)}
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+    </measure>`).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measures}</part>
+</score-partwise>`;
+}
+
+describe('enharmonic normalization', () => {
+  it('rewrites A# → Bb in a flat key (Bb major, fifths=-2)', () => {
+    const xml = fakebookXml([{ step: 'A', alter: 1, kind: 'dominant' }], -2);
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'flats' });
+    expect(chordPro).toContain('Bb7');
+    expect(chordPro).not.toContain('A#');
+  });
+
+  it('rewrites D# → Eb in a flat key', () => {
+    const xml = fakebookXml([{ step: 'D', alter: 1, kind: 'minor-seventh' }], -3);
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'flats' });
+    expect(chordPro).toContain('Ebm7');
+  });
+
+  it('preserves Bb when style is flats', () => {
+    const xml = fakebookXml([{ step: 'B', alter: -1, kind: 'major' }], -2);
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'flats' });
+    expect(chordPro).toContain('Bb');
+  });
+
+  it('rewrites Bb → A# when style is sharps', () => {
+    const xml = fakebookXml([{ step: 'B', alter: -1, kind: 'dominant' }], 4);
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'sharps' });
+    expect(chordPro).toContain('A#7');
+  });
+
+  it('auto mode uses flats for key with fifths=−2 (Bb major)', () => {
+    const xml = fakebookXml([{ step: 'A', alter: 1, kind: 'dominant' }], -2);
+    const { chordPro, diagnostics } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'auto' });
+    expect(chordPro).toContain('Bb7');
+    expect(diagnostics.enharmonicStyleApplied).toBe('flats');
+  });
+
+  it('auto mode uses sharps for key with fifths=+5 (B major)', () => {
+    const xml = fakebookXml([{ step: 'A', alter: 1, kind: 'dominant' }], 5);
+    const { chordPro, diagnostics } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'auto' });
+    expect(chordPro).toContain('A#7');
+    expect(diagnostics.enharmonicStyleApplied).toBe('sharps');
+  });
+
+  it('normalizes bass note in slash chord (G#/D# → Ab/Eb)', () => {
+    // Build XML with a slash chord G#/D#
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions><key><fifths>-3</fifths><mode>major</mode></key></attributes>
+      <harmony>
+        <root><root-step>G</root-step><root-alter>1</root-alter></root>
+        <kind>major</kind>
+        <bass><bass-step>D</bass-step><bass-alter>1</bass-alter></bass>
+      </harmony>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', enharmonicStyle: 'flats' });
+    expect(chordPro).toContain('Ab/Eb');
+  });
+});
+
+describe('jazz symbol style', () => {
+  it('maj7 → Δ7 when jazzSymbols=true', () => {
+    const xml = scoreXml(harmonyXml('C', 'major-seventh'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', jazzSymbols: true });
+    expect(chordPro).toContain('CΔ7');
+  });
+
+  it('m7b5 → ø7 when jazzSymbols=true', () => {
+    const xml = scoreXml(harmonyXml('D', 'half-diminished'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', jazzSymbols: true });
+    expect(chordPro).toContain('Dø7');
+  });
+
+  it('dim7 → °7 when jazzSymbols=true', () => {
+    const xml = scoreXml(harmonyXml('G', 'diminished-seventh'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', jazzSymbols: true });
+    expect(chordPro).toContain('G°7');
+  });
+
+  it('dim → ° when jazzSymbols=true', () => {
+    const xml = scoreXml(harmonyXml('F', 'diminished'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', jazzSymbols: true });
+    expect(chordPro).toContain('F°');
+  });
+
+  it('no jazz symbol substitution when jazzSymbols=false (default)', () => {
+    const xml = scoreXml(harmonyXml('C', 'major-seventh'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    expect(chordPro).toContain('Cmaj7');
+    expect(chordPro).not.toContain('CΔ7');
+  });
+
+  it('m(maj7) is the display for major-minor kind (not mmaj7)', () => {
+    const xml = scoreXml(harmonyXml('C', 'major-minor'));
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    expect(chordPro).toContain('Cm(maj7)');
+    expect(chordPro).not.toContain('mmaj7');
+  });
+});
+
+describe('8-bar phrase grouping', () => {
+  /** Build an XML with N identical measures each having one chord. */
+  function multiMeasureXml(n: number): string {
+    const measures = Array.from({ length: n }, (_, i) => `
+      <measure number="${i + 1}">
+        ${i === 0 ? '<attributes><divisions>1</divisions></attributes>' : ''}
+        ${harmonyXml('C', 'dominant')}
+        <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration></note>
+      </measure>`).join('');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measures}</part>
+</score-partwise>`;
+  }
+
+  it('inserts blank line after every 8 bars in a 32-bar tune', () => {
+    const { chordPro } = convert(multiMeasureXml(32), { formatMode: 'fakebook', barsPerLine: 4 });
+    // 32 bars / 8 = 4 sections; 3 inter-section separators expected (not after last section)
+    // The output structure: header (Style/Key/blank) then 8 chord rows with 3 blank separators
+    const chordSection = chordPro.split('\n').slice(3); // skip header lines
+    const blankLines = chordSection.filter((l) => l === '');
+    expect(blankLines.length).toBe(3);
+  });
+
+  it('does NOT insert phrase separators for a 12-bar tune (12 % 8 ≠ 0)', () => {
+    const { chordPro } = convert(multiMeasureXml(12), { formatMode: 'fakebook', barsPerLine: 4 });
+    const lines = chordPro.split('\n');
+    // Count consecutive blank lines after header — should be at most 1 (the header blank)
+    const blankAfterFirstChord = lines.slice(6).filter((l) => l === '');
+    expect(blankAfterFirstChord.length).toBe(0);
+  });
+});
+
+// ─── 16. Malformed XML ────────────────────────────────────────────────────────
 
 describe('error handling', () => {
   it('returns an error string for unparseable XML without throwing', () => {

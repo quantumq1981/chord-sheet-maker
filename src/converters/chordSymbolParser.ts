@@ -132,7 +132,7 @@ const KIND_TO_SUFFIX: Record<string, string> = {
   "diminished-seventh": "dim7",
   "augmented-seventh":  "aug7",
   "half-diminished":    "m7b5",
-  "major-minor":        "mmaj7",
+  "major-minor":        "m(maj7)",
   "dominant-ninth":     "9",
   "major-ninth":        "maj9",
   "minor-ninth":        "m9",
