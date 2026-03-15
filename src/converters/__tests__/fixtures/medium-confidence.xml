@@ -3,21 +3,28 @@
   "http://www.musicxml.org/dtds/partwise.dtd">
 <!--
   medium-confidence.xml
-  An 8-bar excerpt with only 50% harmony coverage (4 of 8 measures),
-  no key signature, and no composer — designed to score in the MEDIUM
-  reducibility range (45 ≤ score < 72).
+  An 8-bar excerpt in C with mixed harmony coverage:
+    - 4 measures have proper <harmony> elements
+    - 2 measures have Finale-style <direction><words> chord hints (not inferred
+      because real <harmony> is also present, so inferFromDirectionWords = false)
+    - 2 measures have no chord information at all
+  No key signature and no composer — tonal context is weak.
+  Designed to score in the MEDIUM reducibility range (45 ≤ score < 72).
+
+  divisions=1 so whole-note duration=4 is correct.
 -->
 <score-partwise version="3.1">
   <work><work-title>Medium Confidence Excerpt</work-title></work>
+  <!-- No composer — tonal context is limited -->
   <part-list>
     <score-part id="P1"><part-name>Piano</part-name></score-part>
   </part-list>
   <part id="P1">
 
-    <!-- Measure 1: C major — has harmony -->
+    <!-- Measure 1: C — has <harmony> -->
     <measure number="1">
       <attributes>
-        <divisions>4</divisions>
+        <divisions>1</divisions>
         <!-- No key signature — reduces tonal confidence -->
         <time><beats>4</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
@@ -26,39 +33,46 @@
       <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 2: no harmony -->
+    <!-- Measure 2: direction/words chord hint (Finale-style) but NOT inferred
+         because the file already has real <harmony> elements -->
     <measure number="2">
-      <note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+      <direction placement="above">
+        <direction-type><words>Am7</words></direction-type>
+      </direction>
+      <note><pitch><step>A</step><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 3: F major — has harmony -->
+    <!-- Measure 3: F — has <harmony> -->
     <measure number="3">
       <harmony><root><root-step>F</root-step></root><kind>major</kind></harmony>
       <note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 4: no harmony -->
+    <!-- Measure 4: direction/words hint but NOT inferred -->
     <measure number="4">
-      <note><pitch><step>A</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+      <direction placement="above">
+        <direction-type><words>Dm7</words></direction-type>
+      </direction>
+      <note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 5: G7 — has harmony -->
+    <!-- Measure 5: G7 — has <harmony> -->
     <measure number="5">
       <harmony><root><root-step>G</root-step></root><kind>dominant</kind></harmony>
       <note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 6: no harmony -->
+    <!-- Measure 6: no chord info at all -->
     <measure number="6">
       <note><pitch><step>B</step><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 7: no harmony -->
+    <!-- Measure 7: no chord info at all -->
     <measure number="7">
       <note><pitch><step>A</step><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 8: C major — has harmony -->
+    <!-- Measure 8: C — has <harmony> -->
     <measure number="8">
       <harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>
       <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>

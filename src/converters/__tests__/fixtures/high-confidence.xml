@@ -3,9 +3,13 @@
   "http://www.musicxml.org/dtds/partwise.dtd">
 <!--
   high-confidence.xml
-  A 12-bar blues in Bb (flat key, 4 flats).
-  Every measure has at least one <harmony> element.
+  A 12-bar blues in Bb (flat key, 2 flats).
+  Every measure has exactly one <harmony> element.
+  Measures 1-4 and 7-8 repeat Bb7 — verifies % repeat shorthand.
   Used to verify HIGH reducibility classification (score ≥ 72).
+
+  divisions=1 so whole-note duration=4 is correct (1 division = 1 quarter,
+  4 quarters = 1 whole note).
 -->
 <score-partwise version="3.1">
   <work><work-title>High Confidence Blues</work-title></work>
@@ -20,7 +24,7 @@
     <!-- Measure 1: Bb7 -->
     <measure number="1">
       <attributes>
-        <divisions>4</divisions>
+        <divisions>1</divisions>
         <key><fifths>-2</fifths><mode>major</mode></key>
         <time><beats>4</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
@@ -29,7 +33,7 @@
       <note><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 2: Bb7 -->
+    <!-- Measure 2: Bb7 (repeat of bar 1) -->
     <measure number="2">
       <harmony><root><root-step>B</root-step><root-alter>-1</root-alter></root><kind>dominant</kind></harmony>
       <note><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
@@ -53,7 +57,7 @@
       <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 6: Eb7 -->
+    <!-- Measure 6: Eb7 (repeat) -->
     <measure number="6">
       <harmony><root><root-step>E</root-step><root-alter>-1</root-alter></root><kind>dominant</kind></harmony>
       <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
@@ -65,7 +69,7 @@
       <note><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
 
-    <!-- Measure 8: Bb7 -->
+    <!-- Measure 8: Bb7 (repeat) -->
     <measure number="8">
       <harmony><root><root-step>B</root-step><root-alter>-1</root-alter></root><kind>dominant</kind></harmony>
       <note><pitch><step>B</step><alter>-1</alter><octave>3</octave></pitch><duration>4</duration><type>whole</type></note>
