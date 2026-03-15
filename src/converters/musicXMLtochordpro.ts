@@ -63,6 +63,20 @@ export interface ConvertOutput {
   diagnostics: ConverterDiagnostics;
 }
 
+export interface FakebookStats {
+  measuresTotal: number;
+  /** Measures reduced to a single chord token */
+  single: number;
+  /** Measures emitted as a split-bar (two-chord) token */
+  split: number;
+  /** Measures emitted as % (repeat shorthand) */
+  repeat: number;
+  /** Measures with no harmony events (carry-forward) */
+  empty: number;
+  /** Measures where duration-weighting dropped ≥1 ornamental harmony */
+  durationReduced: number;
+}
+
 export interface ConverterDiagnostics {
   filename?: string;
   timestampIso: string;
@@ -81,6 +95,7 @@ export interface ConverterDiagnostics {
   endingsFound: number;
   barsPerLine: number;
   formatModeResolved: "lyrics-inline" | "grid-only" | "fakebook";
+  fakebookStats?: FakebookStats;
 }
 
 export interface HarmonyEvent {
@@ -334,7 +349,9 @@ export function convertMusicXmlToChordPro(
       }
       lines.push(...rendered);
     } else if (formatModeResolved === "fakebook") {
-      lines.push(...renderFakebook(orderedMeasures, metadata, mergedOptions));
+      const { lines: fbLines, stats: fbStats } = renderFakebook(orderedMeasures, metadata, mergedOptions);
+      lines.push(...fbLines);
+      diagnostics.fakebookStats = fbStats;
     } else {
       const rendered = renderGrid(orderedMeasures, mergedOptions, warnings, metadata.time);
       if (lines.length > 0 && rendered.length > 0) {
@@ -510,11 +527,103 @@ function buildMeasureData(
   return result;
 }
 
+// ─── Fake Book reduction helpers ─────────────────────────────────────────────
+
+interface MeasureReduction {
+  /** Canonical chord string used for repeat detection */
+  chord: string;
+  /** Number of chord tokens (0 = empty measure, 1 = single, 2 = split-bar) */
+  chordCount: number;
+  /** True when ≥1 harmony was suppressed by duration-weighting */
+  wasDurationReduced: boolean;
+}
+
+interface FakebookBarToken {
+  /** Display token — may be "%" */
+  token: string;
+  /** Actual chord (for carry-forward when row starts with %) */
+  chord: string;
+  repeatStart: boolean;
+  repeatEnd: boolean;
+}
+
+/**
+ * Reduce a measure's harmony events to at most 2 chord tokens.
+ *
+ * Strategy:
+ *  1. Compute each harmony's duration as the distance to the next event
+ *     (or to end-of-measure for the last event).
+ *  2. Drop ornamental events that occupy < 15 % of the measure.
+ *  3. From the remaining events, keep the top-2 by duration in original
+ *     time order.
+ *  4. If those 2 events share the measure roughly equally (25-75 % each),
+ *     emit a split-bar token (X_Y). Otherwise emit only the dominant one.
+ */
+function reduceMeasureHarmonies(
+  harmonies: HarmonyEvent[],
+  measureDuration: number,
+): MeasureReduction {
+  if (harmonies.length === 0) {
+    return { chord: "", chordCount: 0, wasDurationReduced: false };
+  }
+  if (harmonies.length === 1) {
+    return { chord: harmonies[0].chordText, chordCount: 1, wasDurationReduced: false };
+  }
+
+  // Effective duration: prefer the declared measure duration; fall back to
+  // the position just past the last harmony event.
+  const effectiveDuration = Math.max(
+    measureDuration > 0 ? measureDuration : 0,
+    harmonies[harmonies.length - 1].offsetDivisions + 1,
+  );
+
+  const withDuration = harmonies.map((h, i) => ({
+    chordText: h.chordText,
+    offsetDivisions: h.offsetDivisions,
+    duration: Math.max(
+      1,
+      (i + 1 < harmonies.length ? harmonies[i + 1].offsetDivisions : effectiveDuration)
+        - h.offsetDivisions,
+    ),
+  }));
+
+  // Drop ornamental events (< 15 % of measure)
+  const MIN_WEIGHT = 0.15;
+  const significant = withDuration.filter((h) => h.duration / effectiveDuration >= MIN_WEIGHT);
+  const candidates = significant.length > 0 ? significant : withDuration;
+  const dropped = harmonies.length > candidates.length;
+
+  if (candidates.length === 1) {
+    return { chord: candidates[0].chordText, chordCount: 1, wasDurationReduced: dropped || harmonies.length > 1 };
+  }
+
+  // Keep top-2 by duration, then restore chronological order
+  const top2 = [...candidates]
+    .sort((a, b) => b.duration - a.duration)
+    .slice(0, 2)
+    .sort((a, b) => a.offsetDivisions - b.offsetDivisions);
+
+  const durA = top2[0].duration;
+  const durB = top2[1].duration;
+  const ratioA = durA / (durA + durB);
+  const wasDurationReduced = dropped || candidates.length > 2;
+
+  // Genuine split bar: each half occupies 25–75 % of the combined weight
+  if (ratioA >= 0.25 && ratioA <= 0.75) {
+    const chord = `${top2[0].chordText}_${top2[1].chordText}`;
+    return { chord, chordCount: 2, wasDurationReduced };
+  }
+
+  // One clearly dominates — emit only the longer one
+  const dominant = ratioA > 0.75 ? top2[0] : top2[1];
+  return { chord: dominant.chordText, chordCount: 1, wasDurationReduced: true };
+}
+
 function renderFakebook(
   measures: MeasureData[],
   metadata: ParsedMetadata,
   options: ConvertOptions,
-): string[] {
+): { lines: string[]; stats: FakebookStats } {
   const lines: string[] = [];
 
   // Header block
@@ -524,39 +633,63 @@ function renderFakebook(
   if (metadata.key) lines.push(`Key: ${metadata.key}`);
   lines.push("");
 
-  // Build a bar token per measure
-  let prevChordToken = "";
-  const barTokens: Array<{ token: string; repeatStart: boolean; repeatEnd: boolean }> = [];
+  const barsPerLine = Math.max(1, Math.floor(options.barsPerLine || 4));
+  const stats: FakebookStats = {
+    measuresTotal: measures.length,
+    single: 0, split: 0, repeat: 0, empty: 0, durationReduced: 0,
+  };
+
+  let prevChord = "";
+  const barTokens: FakebookBarToken[] = [];
 
   for (const measure of measures) {
-    const chords = [...measure.harmonies]
-      .sort((a, b) => a.offsetDivisions - b.offsetDivisions)
-      .map((h) => h.chordText);
+    const sorted = [...measure.harmonies].sort((a, b) => a.offsetDivisions - b.offsetDivisions);
+    const reduction = reduceMeasureHarmonies(sorted, measure.durationDivisions);
 
-    let token: string;
-    if (chords.length === 0) {
-      // Empty measure — treat as a repeat of the previous bar
-      token = "%";
+    if (reduction.chordCount === 0) {
+      // Empty measure: carry the previous chord using % shorthand
+      stats.empty++;
+      barTokens.push({
+        token: "%",
+        chord: prevChord,
+        repeatStart: measure.repeatStart ?? false,
+        repeatEnd: measure.repeatEnd ?? false,
+      });
+      continue;
+    }
+
+    if (reduction.wasDurationReduced) stats.durationReduced++;
+    if (reduction.chordCount === 1) stats.single++;
+    else stats.split++;
+
+    const chord = reduction.chord;
+    let displayToken: string;
+    if (chord === prevChord) {
+      displayToken = "%";
+      stats.repeat++;
     } else {
-      const joined = chords.join("_");
-      token = joined === prevChordToken ? "%" : joined;
-      if (token !== "%") {
-        prevChordToken = joined;
-      }
+      displayToken = chord;
+      prevChord = chord;
     }
 
     barTokens.push({
-      token,
+      token: displayToken,
+      chord,
       repeatStart: measure.repeatStart ?? false,
       repeatEnd: measure.repeatEnd ?? false,
     });
   }
 
-  // Group bars into rows of barsPerLine
-  const barsPerLine = Math.max(1, Math.floor(options.barsPerLine || 4));
-
+  // Emit rows — never let a row open with %, as it references the previous
+  // row's last bar which is off-screen on mobile / print.
   for (let i = 0; i < barTokens.length; i += barsPerLine) {
     const chunk = barTokens.slice(i, i + barsPerLine);
+
+    // Replace a leading % with the actual chord so each row is self-contained
+    if (chunk[0].token === "%" && chunk[0].chord) {
+      chunk[0] = { ...chunk[0], token: chunk[0].chord };
+    }
+
     const hasRepeatStart = chunk.some((b) => b.repeatStart);
     const hasRepeatEnd = chunk.some((b) => b.repeatEnd);
     let row = chunk.map((b) => b.token).join(" ");
@@ -565,7 +698,14 @@ function renderFakebook(
     lines.push(row);
   }
 
-  return lines;
+  console.log(
+    `[fakebook] measures=${stats.measuresTotal} ` +
+    `single=${stats.single} split=${stats.split} ` +
+    `repeat=${stats.repeat} empty=${stats.empty} ` +
+    `duration-reduced=${stats.durationReduced}`,
+  );
+
+  return { lines, stats };
 }
 
 function renderLyricsInline(
