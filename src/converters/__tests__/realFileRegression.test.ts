@@ -48,19 +48,29 @@ describe("high-confidence.xml", () => {
     expect(result.diagnostics.xmlIntake!.reducibilityScore).toBeGreaterThanOrEqual(72);
   });
 
-  it("contains chord tokens in output (Bb7, Eb7, F7)", () => {
+  it("timingConfidence = 1.0 (divisions + time sig + clean numbering)", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
-    // At least one of the blues chords should appear
-    const hasBluseChords =
-      result.chordPro.includes("Bb7") ||
-      result.chordPro.includes("Eb7") ||
-      result.chordPro.includes("F7");
-    expect(hasBluseChords).toBe(true);
+    expect(result.diagnostics.xmlIntake!.timingConfidence).toBeCloseTo(1.0, 5);
+  });
+
+  it("harmonyConfidence > 0.7 (full coverage)", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.harmonyConfidence).toBeGreaterThan(0.7);
+  });
+
+  it("tonalContextConfidence = 1.0 (key + mode + title + composer)", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.tonalContextConfidence).toBeCloseTo(1.0, 5);
   });
 
   it("xmlIntake.harmoniesCollected = 12", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.xmlIntake!.harmoniesCollected).toBe(12);
+  });
+
+  it("xmlIntake.measuresWithHarmony = 12", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.measuresWithHarmony).toBe(12);
   });
 
   it("xmlIntake.measuresWithoutHarmony = 0", () => {
@@ -82,9 +92,40 @@ describe("high-confidence.xml", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.xmlIntake!.keyFound).toBe(true);
   });
+
+  it("xmlIntake.modeFound = true", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.modeFound).toBe(true);
+  });
+
+  it("enharmonic style auto-resolves to flats (fifths = -2)", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", enharmonicStyle: "auto" },
+    );
+    expect(result.diagnostics.enharmonicStyleApplied).toBe("flats");
+  });
+
+  it("output contains all three blues chords: Bb7, Eb7, F7", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.chordPro).toContain("Bb7");
+    expect(result.chordPro).toContain("Eb7");
+    expect(result.chordPro).toContain("F7");
+  });
+
+  it("output contains % repeat shorthand for consecutive identical bars", () => {
+    // Bars 1-4 are all Bb7; bars 2-4 should render as %
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.chordPro).toContain("%");
+  });
+
+  it("fakebookStats.repeat > 0 (consecutive Bb7 / Eb7 runs)", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.fakebookStats!.repeat).toBeGreaterThan(0);
+  });
 });
 
-// ─── Medium-confidence fixture (8 bars, ~62% harmony coverage) ───────────────
+// ─── Medium-confidence fixture (8 bars, 50% harmony + direction/words hints) ─
 
 describe("medium-confidence.xml", () => {
   const xml = loadFixture("medium-confidence.xml");
@@ -111,9 +152,27 @@ describe("medium-confidence.xml", () => {
     expect(result.diagnostics.xmlIntake!.reducibilityScore).toBeLessThan(72);
   });
 
-  it("xmlIntake.measuresWithoutHarmony = 4", () => {
+  it("xmlIntake.measuresWithoutHarmony = 4 (direction/words not inferred)", () => {
+    // inferFromDirectionWords = false because real <harmony> elements exist.
+    // The 2 direction/words measures + 2 bare melody measures = 4 without harmony.
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.xmlIntake!.measuresWithoutHarmony).toBe(4);
+  });
+
+  it("directionWordsFound >= 2 (direction/words chord hints detected)", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.directionWordsFound).toBeGreaterThanOrEqual(2);
+  });
+
+  it("inferredHarmoniesCount undefined (direction/words not inferred)", () => {
+    // Real harmonies exist, so inference did not run
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.inferredHarmoniesCount).toBeUndefined();
+  });
+
+  it("xmlIntake.keyFound = false (no key signature)", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.keyFound).toBe(false);
   });
 });
 
@@ -144,6 +203,11 @@ describe("low-confidence.xml", () => {
     expect(result.diagnostics.xmlIntake!.harmoniesCollected).toBe(0);
   });
 
+  it("xmlIntake.harmonyConfidence is near zero", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.harmonyConfidence).toBeLessThan(0.2);
+  });
+
   it("xmlIntake.keyFound = false (no key signature)", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.xmlIntake!.keyFound).toBe(false);
@@ -152,6 +216,12 @@ describe("low-confidence.xml", () => {
   it("xmlIntake.composerFound = false", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.xmlIntake!.composerFound).toBe(false);
+  });
+
+  it("xmlIntake.timingConfidence > 0 (divisions + time sig present)", () => {
+    // File has valid timing structure even though harmony is absent
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.timingConfidence).toBeGreaterThan(0);
   });
 
   it("low-confidence reasons array is non-empty", () => {
@@ -168,14 +238,24 @@ describe("low-confidence.xml", () => {
 // ─── Adaptive strategy selection ─────────────────────────────────────────────
 
 describe("adaptive strategy selection", () => {
-  it("high-confidence file uses tight minHarmonyWeight (0.15) implicitly", () => {
-    // Verify the strategy is reflected through the output — we can at least
-    // confirm the reduction runs and the diagnostics store the class.
+  it("high-confidence file selects HIGH strategy (tight thresholds)", () => {
     const xml = loadFixture("high-confidence.xml");
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.xmlIntake!.reducibilityClass).toBe("high");
-    // No crash or error is the core assertion; strategy internals are tested in
-    // xmlIntakeAnalyzer.test.ts.
+    expect(result.error).toBeUndefined();
+  });
+
+  it("medium-confidence file selects MEDIUM strategy", () => {
+    const xml = loadFixture("medium-confidence.xml");
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.reducibilityClass).toBe("medium");
+    expect(result.error).toBeUndefined();
+  });
+
+  it("low-confidence file selects LOW strategy", () => {
+    const xml = loadFixture("low-confidence.xml");
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.xmlIntake!.reducibilityClass).toBe("low");
     expect(result.error).toBeUndefined();
   });
 });

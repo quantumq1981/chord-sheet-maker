@@ -4,11 +4,15 @@
 <!--
   low-confidence.xml
   A pure melody excerpt (8 bars) with no harmony elements, no key signature,
-  and no composer metadata.
+  and no composer metadata.  Valid XML with intact measure structure, but the
+  harmony layer is completely absent — lowest tier on the confidence ladder.
   Used to verify LOW reducibility classification (score < 45).
+
+  divisions=1 so quarter-note duration=1, half-note duration=2, whole=4.
 -->
 <score-partwise version="3.1">
   <work><work-title>Low Confidence Melody</work-title></work>
+  <!-- No composer, no key — minimal tonal context -->
   <part-list>
     <score-part id="P1"><part-name>Melody</part-name></score-part>
   </part-list>
@@ -16,7 +20,7 @@
 
     <measure number="1">
       <attributes>
-        <divisions>4</divisions>
+        <divisions>1</divisions>
         <!-- No key signature -->
         <time><beats>4</beats><beat-type>4</beat-type></time>
         <clef><sign>G</sign><line>2</line></clef>
