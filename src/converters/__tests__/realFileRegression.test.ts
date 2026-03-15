@@ -24,6 +24,16 @@ function loadFixture(name: string): string {
 
 describe("high-confidence.xml", () => {
   const xml = loadFixture("high-confidence.xml");
+  const expectedFakebook = [
+    "Title: High Confidence Blues",
+    "Style:",
+    "Time: 4/4",
+    "Key: Bb",
+    "",
+    "Bb7 % % %",
+    "Eb7 % Bb7 %",
+    "F7 Eb7 Bb7 F7",
+  ].join("\n");
 
   it("converts without fatal error", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
@@ -119,6 +129,14 @@ describe("high-confidence.xml", () => {
     expect(result.chordPro).toContain("%");
   });
 
+  it("matches the expected fakebook output exactly", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", barsPerLine: 4 },
+    );
+    expect(result.chordPro).toBe(expectedFakebook);
+  });
+
   it("fakebookStats.repeat > 0 (consecutive Bb7 / Eb7 runs)", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.fakebookStats!.repeat).toBeGreaterThan(0);
@@ -129,6 +147,14 @@ describe("high-confidence.xml", () => {
 
 describe("medium-confidence.xml", () => {
   const xml = loadFixture("medium-confidence.xml");
+  const expectedFakebook = [
+    "Title: Medium Confidence Excerpt",
+    "Style:",
+    "Time: 4/4",
+    "",
+    "C % F %",
+    "G7 % % C",
+  ].join("\n");
 
   it("converts without fatal error", () => {
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
@@ -168,6 +194,28 @@ describe("medium-confidence.xml", () => {
     // Real harmonies exist, so inference did not run
     const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
     expect(result.diagnostics.inferredHarmoniesCount).toBeUndefined();
+  });
+
+  it("does not infer Am7 / Dm7 from direction/words when real harmony exists", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", barsPerLine: 4 },
+    );
+    expect(result.chordPro).not.toContain("Am7");
+    expect(result.chordPro).not.toContain("Dm7");
+  });
+
+  it("matches the expected fakebook output exactly", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", barsPerLine: 4 },
+    );
+    expect(result.chordPro).toBe(expectedFakebook);
+  });
+
+  it("omits key header when key signature is absent", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.chordPro).not.toContain("Key:");
   });
 
   it("xmlIntake.keyFound = false (no key signature)", () => {
