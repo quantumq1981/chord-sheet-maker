@@ -1408,10 +1408,26 @@ export default function App() {
               )}
 
               {chordProDiagnostics && (
-                <p className="hint-text">
-                  Resolved mode: <strong>{chordProDiagnostics.formatModeResolved}</strong> · Measures:{' '}
-                  {chordProDiagnostics.measuresCount}
-                </p>
+                <div className="hint-text">
+                  <p>
+                    Resolved mode: <strong>{chordProDiagnostics.formatModeResolved}</strong>
+                    {' · '}Measures: {chordProDiagnostics.measuresCount}
+                    {chordProDiagnostics.harmoniesCollected !== undefined &&
+                      <> · Harmonies collected: {chordProDiagnostics.harmoniesCollected}</>}
+                    {chordProDiagnostics.scoreFormat === 'timewise-converted' &&
+                      <> · <em>score-timewise converted</em></>}
+                  </p>
+                  {chordProDiagnostics.partsInfo && chordProDiagnostics.partsInfo.length > 1 && (
+                    <p>
+                      Parts:{' '}
+                      {chordProDiagnostics.partsInfo.map((p) => (
+                        <span key={p.id} style={{ marginRight: '0.75em' }}>
+                          <strong>{p.name}</strong> ({p.harmonyCount}♩ {p.lyricCount}📝)
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                </div>
               )}
 
               <h2>Export</h2>
