@@ -318,6 +318,94 @@ describe('fakebook format', () => {
     expect(rows.length).toBe(2);
   });
 
+  it('never starts a row with %', () => {
+    // 8 bars where row 1 ends with G, row 2 begins with G again
+    // Without the fix the second row would start with %; with it, it shows G
+    const notes = ['C', 'Am', 'F', 'G', 'G', 'Am', 'F', 'C'];
+    const measuresXml = notes.map((note, i) => `
+      <measure number="${i + 1}">
+        <attributes><divisions>1</divisions></attributes>
+        ${harmonyXml(note, 'major')}
+      </measure>`).join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measuresXml}</part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook', barsPerLine: 4 });
+    const contentRows = chordPro.split('\n').filter(
+      (l) => l.trim() && !l.startsWith('Title:') && !l.startsWith('Style:')
+             && !l.startsWith('Time:') && !l.startsWith('Key:'),
+    );
+    for (const row of contentRows) {
+      expect(row).not.toMatch(/^%/);
+    }
+  });
+
+  it('drops ornamental harmonies shorter than 15% of the measure', () => {
+    // 3 harmony events in one measure:
+    //   C for 7 divisions (43.75%), F# for 1 division (6.25%), G7 for 8 divisions (50%)
+    // F# < 15% → filtered; C and G7 are roughly equal → split bar C_G7
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>7</duration></note>
+      <harmony><root><root-step>F</root-step></root><root-alter>1</root-alter><kind>major</kind></harmony>
+      <note><pitch><step>F</step><octave>4</octave></pitch><duration>1</duration></note>
+      <harmony><root><root-step>G</root-step></root><kind>dominant</kind></harmony>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>8</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    expect(chordPro).not.toContain('F#');
+    expect(chordPro).toContain('C_G7');
+  });
+
+  it('reduces a dominated measure to a single chord when one harmony takes >75%', () => {
+    // C for 14 units (87.5%), G7 for 2 units (12.5%) → only C survives
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>14</duration></note>
+      <harmony><root><root-step>G</root-step></root><kind>dominant</kind></harmony>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>2</duration></note>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { formatMode: 'fakebook' });
+    // G7 is too short to survive as a split; only C
+    expect(chordPro).not.toContain('G7');
+    expect(chordPro).toContain('C');
+  });
+
+  it('exposes fakebookStats in diagnostics', () => {
+    const measuresXml = ['C', 'G', 'C'].map((note, i) => `
+      <measure number="${i + 1}">
+        <attributes><divisions>1</divisions></attributes>
+        ${harmonyXml(note, 'major')}
+      </measure>`).join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">${measuresXml}</part>
+</score-partwise>`;
+    const { diagnostics } = convert(xml, { formatMode: 'fakebook' });
+    expect(diagnostics.fakebookStats).toBeDefined();
+    expect(diagnostics.fakebookStats!.measuresTotal).toBe(3);
+    // Bar 1: C (single), bar 2: G (single), bar 3: C (single — prevChord is G, not C)
+    expect(diagnostics.fakebookStats!.single).toBe(3);
+    expect(diagnostics.fakebookStats!.repeat).toBe(0);
+  });
+
   it('adds |: and :| repeat markers', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0">
