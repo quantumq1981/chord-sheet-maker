@@ -283,6 +283,59 @@ describe("low-confidence.xml", () => {
   });
 });
 
+// ─── Row-leading repeat regression fixture ──────────────────────────────────
+
+describe("row-leading-repeat.xml", () => {
+  const xml = loadFixture("row-leading-repeat.xml");
+  const expectedFakebook = [
+    "Title: Row Leading Repeat",
+    "Style:",
+    "Time: 4/4",
+    "Key: C",
+    "",
+    "C G7 Am7 F",
+    "F C Dm7 G7",
+  ].join("\n");
+
+  it("converts without fatal error", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.error).toBeUndefined();
+  });
+
+  it("matches the expected fakebook output exactly", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", barsPerLine: 4 },
+    );
+    expect(result.chordPro).toBe(expectedFakebook);
+  });
+
+  it("second music row does not start with %", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", barsPerLine: 4 },
+    );
+    const lines = result.chordPro.split("\n");
+    const musicRows = lines.filter((line) => line.trim().length > 0 && !line.includes(":"));
+    expect(musicRows[1].startsWith("%")).toBe(false);
+    expect(musicRows[1]).toMatch(/^F\b/);
+  });
+
+  it("no emitted fakebook line starts with %", () => {
+    const result = convertMusicXmlToChordPro(
+      { xmlText: xml },
+      { formatMode: "fakebook", barsPerLine: 4 },
+    );
+    const lines = result.chordPro.split("\n");
+    expect(lines.some((line) => line.startsWith("%"))).toBe(false);
+  });
+
+  it("fakebookStats.repeat > 0 (measure 5 repeats measure 4)", () => {
+    const result = convertMusicXmlToChordPro({ xmlText: xml }, { formatMode: "fakebook" });
+    expect(result.diagnostics.fakebookStats!.repeat).toBeGreaterThan(0);
+  });
+});
+
 // ─── Adaptive strategy selection ─────────────────────────────────────────────
 
 describe("adaptive strategy selection", () => {
