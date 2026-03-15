@@ -72,11 +72,15 @@ type ChordProModeUi = 'auto' | 'lyrics-inline' | 'grid-only' | 'fakebook';
 type ChordProBracketUi = 'separate' | 'combined';
 type ChordProRepeatUi = 'none' | 'simple-unroll';
 
+type ChordProEnharmonicUi = 'auto' | 'flats' | 'sharps';
+
 type ChordProUiState = {
   barsPerLine: number;
   mode: ChordProModeUi;
   chordBracketStyle: ChordProBracketUi;
   repeatStrategy: ChordProRepeatUi;
+  enharmonicStyle: ChordProEnharmonicUi;
+  jazzSymbols: boolean;
 };
 
 // ─── File-accept string ───────────────────────────────────────────────────────
@@ -372,6 +376,8 @@ function buildChordProOptionsFromUI(uiState: ChordProUiState) {
     repeatStrategy: repeatMap[uiState.repeatStrategy],
     barlineStyle: 'pipes' as const,
     wrapPolicy: 'bars-per-line' as const,
+    enharmonicStyle: uiState.enharmonicStyle,
+    jazzSymbols: uiState.jazzSymbols,
   };
 }
 
@@ -487,6 +493,7 @@ export default function App() {
   const [pdfFilename, setPdfFilename] = useState('score.pdf');
   const [chordProUi, setChordProUi] = useState<ChordProUiState>({
     barsPerLine: 4, mode: 'auto', chordBracketStyle: 'separate', repeatStrategy: 'none',
+    enharmonicStyle: 'auto', jazzSymbols: false,
   });
   const [chordProText, setChordProText] = useState('');
   const [chordProWarnings, setChordProWarnings] = useState<string[]>([]);
@@ -1374,6 +1381,18 @@ export default function App() {
                   <option value="none">None</option>
                   <option value="simple-unroll">Simple Unroll</option>
                 </select>
+                <label className="export-label" htmlFor="chordpro-enharmonic">Enharmonic</label>
+                <select id="chordpro-enharmonic" value={chordProUi.enharmonicStyle}
+                  onChange={(e) => setChordProUi((p) => ({ ...p, enharmonicStyle: e.target.value as ChordProEnharmonicUi }))}>
+                  <option value="auto">Auto (key-based)</option>
+                  <option value="flats">Prefer flats</option>
+                  <option value="sharps">Prefer sharps</option>
+                </select>
+                <label className="export-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
+                  <input type="checkbox" checked={chordProUi.jazzSymbols}
+                    onChange={(e) => setChordProUi((p) => ({ ...p, jazzSymbols: e.target.checked }))} />
+                  Jazz symbols (Δ7 ø7 °7)
+                </label>
               </div>
 
               <div className="export-actions">
@@ -1417,6 +1436,8 @@ export default function App() {
                         {chordProDiagnostics.inferredHarmoniesCount !== undefined &&
                           <em> (inferred from text)</em>}
                       </>}
+                    {chordProDiagnostics.enharmonicStyleApplied &&
+                      <> · enh: {chordProDiagnostics.enharmonicStyleApplied}</>}
                     {chordProDiagnostics.scoreFormat === 'timewise-converted' &&
                       <> · <em>score-timewise converted</em></>}
                   </p>

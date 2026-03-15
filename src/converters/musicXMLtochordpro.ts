@@ -50,6 +50,17 @@ export interface ConvertOptions {
   keyPolicy: KeySignaturePolicy;
   timePolicy: TimeSignaturePolicy;
   normalizeWhitespace: boolean;
+  /**
+   * Enharmonic spelling preference for chord root/bass notes.
+   * 'auto' (default) = infer from key signature: flat keys → flats, ≥4 sharps → sharps.
+   * This normalises e.g. A# → Bb in Bb major, D# → Eb in Eb major.
+   */
+  enharmonicStyle?: "auto" | "flats" | "sharps";
+  /**
+   * Replace standard quality suffixes with compact jazz symbols in fakebook output.
+   * maj7 → Δ7, m7b5 → ø7, dim7 → °7, dim → °
+   */
+  jazzSymbols?: boolean;
 }
 
 export interface ConvertInput {
@@ -114,6 +125,10 @@ export interface ConverterDiagnostics {
   directionWordsFound?: number;
   /** How many of those were actually inferred as chords (only set when inference ran) */
   inferredHarmoniesCount?: number;
+  /** Raw circle-of-fifths value from the key signature (-7…+7) */
+  keyFifths?: number;
+  /** Enharmonic style actually applied to chord tokens */
+  enharmonicStyleApplied?: "flats" | "sharps";
 }
 
 export interface HarmonyEvent {
@@ -153,6 +168,8 @@ interface ParsedMetadata {
   composer?: string;
   key?: string;
   time?: string;
+  /** Raw circle-of-fifths from <key><fifths> — used for enharmonic normalization */
+  fifths?: number;
 }
 
 const KIND_SUFFIX_MAP: Record<string, string> = {
@@ -174,7 +191,7 @@ const KIND_SUFFIX_MAP: Record<string, string> = {
   "diminished-seventh": "dim7",
   "augmented-seventh": "aug7",
   "half-diminished": "m7b5",
-  "major-minor": "mmaj7",
+  "major-minor": "m(maj7)",
   // Ninths
   "dominant-ninth": "9",
   "major-ninth": "maj9",
@@ -205,6 +222,8 @@ export function getDefaultConvertOptions(): ConvertOptions {
     keyPolicy: "emit-if-known",
     timePolicy: "emit-if-known",
     normalizeWhitespace: true,
+    enharmonicStyle: "auto",
+    jazzSymbols: false,
   };
 }
 
@@ -298,6 +317,7 @@ export function convertMusicXmlToChordPro(
     diagnostics.composer = metadata.composer;
     diagnostics.key = metadata.key;
     diagnostics.time = metadata.time;
+    diagnostics.keyFifths = metadata.fifths;
 
     // ── Per-part info ──────────────────────────────────────────────────────
     diagnostics.partsInfo = collectPartsInfo(resolvedDoc);
@@ -405,9 +425,11 @@ export function convertMusicXmlToChordPro(
       }
       lines.push(...rendered);
     } else if (formatModeResolved === "fakebook") {
-      const { lines: fbLines, stats: fbStats } = renderFakebook(orderedMeasures, metadata, mergedOptions);
+      const { lines: fbLines, stats: fbStats, enharmonicStyleApplied } =
+        renderFakebook(orderedMeasures, metadata, mergedOptions);
       lines.push(...fbLines);
       diagnostics.fakebookStats = fbStats;
+      diagnostics.enharmonicStyleApplied = enharmonicStyleApplied;
     } else {
       const rendered = renderGrid(orderedMeasures, mergedOptions, warnings, metadata.time);
       if (lines.length > 0 && rendered.length > 0) {
@@ -571,11 +593,15 @@ function parseMetadata(xmlDoc: Document): ParsedMetadata {
   const beatType = firstAttributes?.querySelector("time > beat-type")?.textContent?.trim();
   const time = beats && beatType ? `${beats}/${beatType}` : undefined;
 
+  const fifthsParsed = fifthsRaw != null ? Number.parseInt(fifthsRaw, 10) : undefined;
+  const fifths = fifthsParsed != null && Number.isFinite(fifthsParsed) ? fifthsParsed : undefined;
+
   return {
     title: title?.trim() || undefined,
     composer,
     key,
     time,
+    fifths,
   };
 }
 
@@ -786,12 +812,121 @@ function reduceMeasureHarmonies(
   return { chord: dominant.chordText, chordCount: 1, wasDurationReduced: true };
 }
 
+// ─── Chord token normalization ────────────────────────────────────────────────
+
+/** Enharmonic equivalents used when preferring flat spellings (jazz default). */
+const SHARP_TO_FLAT: Record<string, string> = {
+  "A#": "Bb", "C#": "Db", "D#": "Eb", "F#": "Gb", "G#": "Ab",
+};
+
+/** Enharmonic equivalents used when preferring sharp spellings. */
+const FLAT_TO_SHARP: Record<string, string> = {
+  "Bb": "A#", "Db": "C#", "Eb": "D#", "Gb": "F#", "Ab": "G#",
+};
+
+/**
+ * Determine whether flat or sharp spellings are preferred given the key's
+ * circle-of-fifths position.  Jazz convention: prefer flats everywhere except
+ * keys with ≥ 4 sharps (E, B, F#, C#).
+ */
+function resolveEnharmonicStyle(
+  style: "auto" | "flats" | "sharps" | undefined,
+  fifths: number | undefined,
+): "flats" | "sharps" {
+  if (style === "flats") return "flats";
+  if (style === "sharps") return "sharps";
+  // 'auto': flat-biased (jazz default); sharps only for very sharp keys
+  return (fifths ?? 0) >= 4 ? "sharps" : "flats";
+}
+
+function normalizeNoteSpelling(note: string, style: "flats" | "sharps"): string {
+  return style === "flats"
+    ? (SHARP_TO_FLAT[note] ?? note)
+    : (FLAT_TO_SHARP[note] ?? note);
+}
+
+/**
+ * Rewrite the root and bass note of a chord token to the preferred spelling.
+ * Handles both simple chords ("A#7") and split-bar pairs ("A#7_D#m7").
+ */
+function normalizeChordSpelling(token: string, style: "flats" | "sharps"): string {
+  if (!token || token === "%") return token;
+
+  // Handle split-bar tokens (e.g. "A#7_D#m7")
+  if (token.includes("_")) {
+    return token.split("_").map((part) => normalizeChordSpelling(part, style)).join("_");
+  }
+
+  const rootMatch = token.match(/^([A-G][#b]?)/);
+  if (!rootMatch) return token;
+  const root = rootMatch[1];
+  let result = normalizeNoteSpelling(root, style) + token.slice(root.length);
+
+  // Normalize bass note in slash chords
+  const slashIdx = result.lastIndexOf("/");
+  if (slashIdx >= 0) {
+    const bassStr = result.slice(slashIdx + 1);
+    const bassMatch = bassStr.match(/^([A-G][#b]?)/);
+    if (bassMatch) {
+      const normalizedBass = normalizeNoteSpelling(bassMatch[1], style);
+      result =
+        result.slice(0, slashIdx + 1) +
+        normalizedBass +
+        bassStr.slice(bassMatch[1].length);
+    }
+  }
+  return result;
+}
+
+/**
+ * Jazz symbol substitutions — applied in longest-match-first order so that
+ * e.g. "maj7" is caught before a hypothetical bare "maj".
+ * Only affects display: the intermediate chord text is still ASCII-safe
+ * (Δ is U+0394, ø is U+00F8, ° is U+00B0).
+ */
+const JAZZ_SYMBOL_SUBS: [RegExp, string][] = [
+  [/m\(maj7\)/g, "m(Δ7)"],  // minor-major 7th
+  [/maj13/g,     "Δ13"],
+  [/maj11/g,     "Δ11"],
+  [/maj9/g,      "Δ9"],
+  [/maj7/g,      "Δ7"],
+  [/m7b5/g,      "ø7"],
+  [/dim7/g,      "°7"],
+  [/dim/g,       "°"],
+];
+
+function applyJazzSymbols(chord: string): string {
+  if (!chord || chord === "%") return chord;
+  // Apply to each half of a split-bar pair independently
+  if (chord.includes("_")) {
+    return chord.split("_").map(applyJazzSymbols).join("_");
+  }
+  let result = chord;
+  for (const [pattern, replacement] of JAZZ_SYMBOL_SUBS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
+// ─── Fake-book renderer ───────────────────────────────────────────────────────
+
 function renderFakebook(
   measures: MeasureData[],
   metadata: ParsedMetadata,
   options: ConvertOptions,
-): { lines: string[]; stats: FakebookStats } {
+): { lines: string[]; stats: FakebookStats; enharmonicStyleApplied: "flats" | "sharps" } {
   const lines: string[] = [];
+
+  // Determine enharmonic and symbol style
+  const enhStyle = resolveEnharmonicStyle(options.enharmonicStyle, metadata.fifths);
+  const useJazzSymbols = options.jazzSymbols ?? false;
+
+  /** Apply all post-processing to a raw chord string. */
+  function finalizeChord(raw: string): string {
+    let result = normalizeChordSpelling(raw, enhStyle);
+    if (useJazzSymbols) result = applyJazzSymbols(result);
+    return result;
+  }
 
   // Header block
   if (metadata.title) lines.push(`Title: ${metadata.title}`);
@@ -814,7 +949,6 @@ function renderFakebook(
     const reduction = reduceMeasureHarmonies(sorted, measure.durationDivisions);
 
     if (reduction.chordCount === 0) {
-      // Empty measure: carry the previous chord using % shorthand
       stats.empty++;
       barTokens.push({
         token: "%",
@@ -829,7 +963,8 @@ function renderFakebook(
     if (reduction.chordCount === 1) stats.single++;
     else stats.split++;
 
-    const chord = reduction.chord;
+    // Apply enharmonic + jazz-symbol normalization to the raw chord
+    const chord = finalizeChord(reduction.chord);
     let displayToken: string;
     if (chord === prevChord) {
       displayToken = "%";
@@ -847,8 +982,17 @@ function renderFakebook(
     });
   }
 
-  // Emit rows — never let a row open with %, as it references the previous
-  // row's last bar which is off-screen on mobile / print.
+  // ── Phrase-aware grouping ─────────────────────────────────────────────────
+  // Insert a blank line between 8-bar phrase groups when the total measure
+  // count is divisible by 8.  This reliably separates AABA / ABAC 32-bar
+  // forms and 16-bar sections without needing explicit phrase detection.
+  const phraseLen = 8; // bars per phrase group
+  const totalBars = barTokens.length;
+  const usePhraseSep = totalBars >= phraseLen && totalBars % phraseLen === 0;
+
+  // ── Row emission ──────────────────────────────────────────────────────────
+  // Never let a row open with %, as it references the previous row's last
+  // bar which is off-screen on mobile / print.
   for (let i = 0; i < barTokens.length; i += barsPerLine) {
     const chunk = barTokens.slice(i, i + barsPerLine);
 
@@ -863,16 +1007,23 @@ function renderFakebook(
     if (hasRepeatStart) row = "|: " + row;
     if (hasRepeatEnd) row = row + " :|";
     lines.push(row);
+
+    // Add blank separator after every phraseLen bars (but not after the last row)
+    const endBar = i + barsPerLine; // exclusive index into barTokens
+    if (usePhraseSep && endBar < barTokens.length && endBar % phraseLen === 0) {
+      lines.push("");
+    }
   }
 
   console.log(
     `[fakebook] measures=${stats.measuresTotal} ` +
     `single=${stats.single} split=${stats.split} ` +
     `repeat=${stats.repeat} empty=${stats.empty} ` +
-    `duration-reduced=${stats.durationReduced}`,
+    `dur-reduced=${stats.durationReduced} ` +
+    `enh=${enhStyle} jazz=${useJazzSymbols} phrase-sep=${usePhraseSep}`,
   );
 
-  return { lines, stats };
+  return { lines, stats, enharmonicStyleApplied: enhStyle };
 }
 
 function renderLyricsInline(
