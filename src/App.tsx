@@ -393,8 +393,9 @@ function deriveProFilename(loadedFilename: string): string {
 }
 
 /** Serialize a ChordChartDocument back to canonical ChordPro text. */
-function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: number): string {
+function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: number, uiState: ChordProUiState): { text: string; warnings: string[] } {
   const lines: string[] = [];
+  const warnings: string[] = [];
 
   if (doc.title)    lines.push(`{title: ${doc.title}}`);
   if (doc.artist)   lines.push(`{artist: ${doc.artist}}`);
@@ -406,6 +407,13 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
   if (doc.capo)  lines.push(`{capo: ${doc.capo}}`);
   if (doc.tempo) lines.push(`{tempo: ${doc.tempo}}`);
   if (doc.time)  lines.push(`{time: ${doc.time}}`);
+
+  const isGridOnly = uiState.mode === 'grid-only';
+  const isCombinedBracket = uiState.chordBracketStyle === 'combined';
+
+  if (!isGridOnly && uiState.barsPerLine !== 4) {
+    warnings.push('Bars-per-line currently applies to Grid Only mode for text-chart imports.');
+  }
 
   for (const section of doc.sections) {
     lines.push('');
@@ -423,11 +431,31 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
     }
 
     for (const line of section.lines) {
+      if (isGridOnly) {
+        const chords = line.tokens
+          .filter((token) => token.kind === 'chord')
+          .map((token) => (transposeSteps !== 0 ? transposeChord(token.text, transposeSteps) : token.text));
+        if (chords.length === 0) continue;
+        const chunked: string[] = [];
+        for (let i = 0; i < chords.length; i += uiState.barsPerLine) {
+          chunked.push(chords.slice(i, i + uiState.barsPerLine).join(' '));
+        }
+        lines.push(chunked.join(' | '));
+        continue;
+      }
+
       const parts: string[] = [];
-      for (const token of line.tokens) {
+      for (let index = 0; index < line.tokens.length; index += 1) {
+        const token = line.tokens[index];
         if (token.kind === 'chord') {
           const displayed = transposeSteps !== 0 ? transposeChord(token.text, transposeSteps) : token.text;
-          parts.push(`[${displayed}]`);
+          const nextToken = line.tokens[index + 1];
+          if (isCombinedBracket && nextToken?.kind === 'lyric') {
+            parts.push(`[${displayed} ${nextToken.text}]`);
+            index += 1;
+          } else {
+            parts.push(`[${displayed}]`);
+          }
         } else if (token.kind === 'lyric') {
           parts.push(token.text);
         } else if (token.kind === 'comment') {
@@ -447,7 +475,7 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
     }
   }
 
-  return lines.join('\n').trimStart();
+  return { text: lines.join('\n').trimStart(), warnings };
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -503,6 +531,8 @@ export default function App() {
   const [chartDocument, setChartDocument] = useState<ChordChartDocument | null>(null);
   const [transposeSteps, setTransposeSteps] = useState(0);
   const [detectedFormatLabel, setDetectedFormatLabel] = useState('');
+  const [chartChordProText, setChartChordProText] = useState('');
+  const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
 
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
@@ -586,7 +616,7 @@ export default function App() {
       window.clearTimeout(omrPollingTimerRef.current);
       omrPollingTimerRef.current = null;
     }
-  }, []);
+  }, [chordProUi]);
 
   const resetOmrState = useCallback(() => {
     stopOmrPolling();
@@ -714,6 +744,8 @@ export default function App() {
     setChartDocument(null);
     setTransposeSteps(0);
     setDetectedFormatLabel('');
+    setChartChordProText('');
+    setChartChordProWarnings([]);
     // OMR
     resetOmrState();
   }, [resetOmrState]);
@@ -742,6 +774,8 @@ export default function App() {
         setChartDocument(null);
         setTransposeSteps(0);
         setDetectedFormatLabel(detected.format === 'mxl' ? 'MXL' : 'MusicXML');
+        setChartChordProText('');
+        setChartChordProWarnings([]);
         setAppMode('notation');
 
       } else if (isChordChartFormat(detected)) {
@@ -760,6 +794,9 @@ export default function App() {
         setChartDocument(doc);
         setTransposeSteps(0);
         setDetectedFormatLabel(formatLabels[sourceFormat] ?? sourceFormat);
+        const chartExport = serializeChordProFromDocument(doc, 0, chordProUi);
+        setChartChordProText(chartExport.text);
+        setChartChordProWarnings(chartExport.warnings);
         setRenderError('');
         setExportFeedback(null);
         // Clear notation state
@@ -1148,10 +1185,26 @@ export default function App() {
   const normalizedTranspose = ((transposeSteps % 12) + 12) % 12;
   const displayTranspose = normalizedTranspose > 6 ? normalizedTranspose - 12 : normalizedTranspose;
 
-  const chartProText = useMemo(() => {
-    if (!chartDocument) return '';
-    return serializeChordProFromDocument(chartDocument, transposeSteps);
-  }, [chartDocument, transposeSteps]);
+  const chartExportPreview = useMemo(() => {
+    if (!chartDocument) return { text: '', warnings: [] as string[] };
+    return serializeChordProFromDocument(chartDocument, transposeSteps, chordProUi);
+  }, [chartDocument, transposeSteps, chordProUi]);
+
+  const generateChartChordPro = useCallback(() => {
+    if (!chartDocument) {
+      showExportError('Load a chord chart file before generating ChordPro.');
+      return;
+    }
+    setChartChordProText(chartExportPreview.text);
+    setChartChordProWarnings(chartExportPreview.warnings);
+    showExportSuccess('ChordPro generated.');
+  }, [chartDocument, chartExportPreview, showExportError, showExportSuccess]);
+
+  useEffect(() => {
+    if (!chartDocument) return;
+    setChartChordProText(chartExportPreview.text);
+    setChartChordProWarnings(chartExportPreview.warnings);
+  }, [chartDocument, chartExportPreview]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1292,16 +1345,45 @@ export default function App() {
                 </button>
               </div>
 
-              <h2>Export ChordPro</h2>
+              <h2>ChordPro Export</h2>
+              <div className="chordpro-options-grid">
+                <label className="export-label" htmlFor="chart-chordpro-bars">Bars per line</label>
+                <input
+                  id="chart-chordpro-bars" type="number" min={1} max={16}
+                  value={chordProUi.barsPerLine}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setChordProUi((p) => ({ ...p, barsPerLine: Number.isFinite(v) ? Math.max(1, Math.min(16, v)) : p.barsPerLine }));
+                  }}
+                />
+                <label className="export-label" htmlFor="chart-chordpro-mode">Mode</label>
+                <select id="chart-chordpro-mode" value={chordProUi.mode}
+                  onChange={(e) => setChordProUi((p) => ({ ...p, mode: e.target.value as ChordProModeUi }))}>
+                  <option value="auto">Auto</option>
+                  <option value="lyrics-inline">Lyrics Inline</option>
+                  <option value="grid-only">Grid Only</option>
+                  <option value="fakebook">Fake Book</option>
+                </select>
+                <label className="export-label" htmlFor="chart-chordpro-brackets">Chord bracket style</label>
+                <select id="chart-chordpro-brackets" value={chordProUi.chordBracketStyle}
+                  onChange={(e) => setChordProUi((p) => ({ ...p, chordBracketStyle: e.target.value as ChordProBracketUi }))}>
+                  <option value="separate">Separate</option>
+                  <option value="combined">Combined</option>
+                </select>
+              </div>
+
               <div className="chart-actions">
-                <button type="button" onClick={() => void copyChordPro(chartProText)}>
+                <button type="button" onClick={generateChartChordPro}>
+                  Generate ChordPro
+                </button>
+                <button type="button" onClick={() => void copyChordPro(chartChordProText)}>
                   Copy ChordPro
                 </button>
-                <button type="button" onClick={() => downloadChordProText(chartProText, deriveProFilename(loadedFilename))}>
+                <button type="button" onClick={() => downloadChordProText(chartChordProText, deriveProFilename(loadedFilename))}>
                   Download .pro
                 </button>
                 {canShare && (
-                  <button type="button" onClick={() => void shareText(chartProText, deriveProFilename(loadedFilename))}>
+                  <button type="button" onClick={() => void shareText(chartChordProText, deriveProFilename(loadedFilename))}>
                     Share
                   </button>
                 )}
@@ -1309,12 +1391,18 @@ export default function App() {
 
               <textarea
                 className="chordpro-output"
-                value={chartProText}
-                placeholder="Normalized ChordPro output will appear here."
+                value={chartChordProText}
+                placeholder="Generated ChordPro output will appear here."
                 wrap="off"
                 spellCheck={false}
                 readOnly
               />
+              {chartChordProWarnings.length > 0 && (
+                <div className="warning-block">
+                  <strong>ChordPro warnings</strong>
+                  <ul>{chartChordProWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
+                </div>
+              )}
             </>
           )}
 
