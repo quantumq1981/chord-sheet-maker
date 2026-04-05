@@ -498,6 +498,51 @@ function parseTempoFromMusicXml(xmlText: string): string | undefined {
   }
 }
 
+/**
+ * Returns true when a raw text string (stored as a lyric token) looks like a
+ * chord-only grid line, e.g. "| D#m7 | C#/F |" or "Am  G7  C  F".
+ * These arise in ChordPro/UG files where pipe-grid lines aren't bracket-encoded.
+ */
+function isChordGridText(text: string): boolean {
+  // Strip repeat markers and pipes, then check if most tokens look like chords
+  const cleaned = text.replace(/\|:/g, '').replace(/:\|/g, '').replace(/\|/g, ' ').trim();
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  // A token "looks like a chord" if it starts with a note letter (A-G),
+  // is a repeat-bar symbol (%), or is a common chord-notation token.
+  const chordLike = tokens.filter(
+    (t) => /^[A-G][^\s]*$/.test(t) || t === '%' || t === 'x2' || t === 'x3' || t === 'x4',
+  );
+  return chordLike.length >= 1 && chordLike.length / tokens.length >= 0.55;
+}
+
+/**
+ * Convert a raw chord-grid lyric text to a CSMPN-friendly chord line:
+ * - Preserve |: and :| repeat markers
+ * - Remove lone | bar separators (replaced by spaces)
+ */
+function lyricTextToCsmpnLine(text: string, transposeSteps: number): string {
+  const RSTART = '\x00RS\x00';
+  const REND = '\x00RE\x00';
+  return text
+    .replace(/\|:/g, RSTART)
+    .replace(/:\|/g, REND)
+    .replace(/\|/g, ' ')
+    .replace(new RegExp(RSTART, 'g'), '|:')
+    .replace(new RegExp(REND, 'g'), ':|')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => {
+      if (t === '|:' || t === ':|' || t === '%' || /^x\d+$/.test(t)) return t;
+      // Attempt transposition; if it fails (non-chord token) return as-is
+      if (transposeSteps !== 0) {
+        try { return transposeChord(t, transposeSteps); } catch { return t; }
+      }
+      return t;
+    })
+    .join(' ');
+}
+
 function buildCsmpnFromChartDocument(
   doc: ChordChartDocument,
   transposeSteps: number,
@@ -527,10 +572,25 @@ function buildCsmpnFromChartDocument(
     if (label) out.push(`- ${label}`);
 
     for (const line of section.lines) {
-      const chords = line.tokens
-        .filter((t) => t.kind === 'chord')
-        .map((t) => (transposeSteps !== 0 ? transposeChord(t.text, transposeSteps) : t.text));
-      if (chords.length > 0) out.push(chords.join(' '));
+      // Primary path: line has explicit chord tokens (e.g. [Am]lyrics format)
+      const chordTokens = line.tokens.filter((t) => t.kind === 'chord');
+      if (chordTokens.length > 0) {
+        const chords = chordTokens.map((t) =>
+          transposeSteps !== 0 ? transposeChord(t.text, transposeSteps) : t.text,
+        );
+        out.push(chords.join(' '));
+        continue;
+      }
+
+      // Fallback: line is all-lyric tokens — may be a pipe-grid chord line
+      // (common in UG/ChordPro files where | C | G | Am | is stored as lyric text)
+      const allLyric = line.tokens.every((t) => t.kind === 'lyric');
+      if (allLyric) {
+        const text = line.tokens.map((t) => t.text).join('');
+        if (isChordGridText(text)) {
+          out.push(lyricTextToCsmpnLine(text, transposeSteps));
+        }
+      }
     }
     out.push('');
   }
