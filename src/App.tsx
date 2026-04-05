@@ -478,6 +478,62 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
   return { text: lines.join('\n').trimStart(), warnings };
 }
 
+function parseTempoFromMusicXml(xmlText: string): string | undefined {
+  if (!xmlText.trim()) return undefined;
+  try {
+    const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+    const parserErrorNode =
+      doc.querySelector('parsererror') ?? doc.getElementsByTagName('parsererror').item(0);
+    if (parserErrorNode) return undefined;
+
+    const soundTempo = doc.querySelector('sound[tempo]')?.getAttribute('tempo')?.trim();
+    if (soundTempo) return soundTempo;
+
+    const perMinute = doc.querySelector('metronome > per-minute')?.textContent?.trim();
+    if (perMinute) return perMinute;
+
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildCsmpnFakeBookSource(fakeBookText: string, fallbackTitle: string, tempo?: string): string {
+  const lines = fakeBookText
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  const extractHeaderValue = (prefix: string) => {
+    const match = lines.find((line) => line.toLowerCase().startsWith(prefix.toLowerCase()));
+    if (!match) return '';
+    return match.slice(prefix.length).trim();
+  };
+
+  const title = extractHeaderValue('Title:') || fallbackTitle || 'Untitled';
+  const style = extractHeaderValue('Style:') || 'Fake Book';
+  const time = extractHeaderValue('Time:') || '';
+  const key = extractHeaderValue('Key:') || '';
+
+  const bodyStartIndex = lines.findIndex((line) =>
+    !line.startsWith('Title:') &&
+    !line.startsWith('Style:') &&
+    !line.startsWith('Time:') &&
+    !line.startsWith('Key:'),
+  );
+  const bodyLines = bodyStartIndex >= 0 ? lines.slice(bodyStartIndex) : [];
+
+  return [
+    `Title: ${title}`,
+    `Style: ${style}`,
+    `Tempo: ${tempo ?? ''}`.trimEnd(),
+    `Time: ${time}`,
+    `Key: ${key}`,
+    '',
+    ...bodyLines,
+  ].join('\n').trimEnd();
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function App() {
@@ -526,6 +582,8 @@ export default function App() {
   const [chordProText, setChordProText] = useState('');
   const [chordProWarnings, setChordProWarnings] = useState<string[]>([]);
   const [chordProDiagnostics, setChordProDiagnostics] = useState<ConverterDiagnostics | null>(null);
+  const [csmpnFakeBookText, setCsmpnFakeBookText] = useState('');
+  const [csmpnWarnings, setCsmpnWarnings] = useState<string[]>([]);
 
   // ── Chord-chart mode state ──
   const [chartDocument, setChartDocument] = useState<ChordChartDocument | null>(null);
@@ -738,6 +796,8 @@ export default function App() {
     setChordProText('');
     setChordProWarnings([]);
     setChordProDiagnostics(null);
+    setCsmpnFakeBookText('');
+    setCsmpnWarnings([]);
     xmlLoadedRef.current = '';
     if (containerRef.current) containerRef.current.innerHTML = '';
     // Chart
@@ -770,6 +830,8 @@ export default function App() {
         setChordProText('');
         setChordProWarnings([]);
         setChordProDiagnostics(null);
+        setCsmpnFakeBookText('');
+        setCsmpnWarnings([]);
         // Clear chord-chart state
         setChartDocument(null);
         setTransposeSteps(0);
@@ -807,6 +869,8 @@ export default function App() {
         setChordProText('');
         setChordProWarnings([]);
         setChordProDiagnostics(null);
+        setCsmpnFakeBookText('');
+        setCsmpnWarnings([]);
         if (containerRef.current) containerRef.current.innerHTML = '';
         xmlLoadedRef.current = '';
         setAppMode('chord-chart');
@@ -1107,6 +1171,26 @@ export default function App() {
       showExportSuccess('ChordPro generated.');
     } catch (error) {
       showExportError(`ChordPro conversion failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [chordProUi, loadedFilename, loadedXmlText, showExportError, showExportSuccess]);
+
+  const generateCsmpnFakeBook = useCallback(async () => {
+    if (!loadedXmlText) { showExportError('Load a MusicXML file before generating CSMPN Fake Book.'); return; }
+    try {
+      const options = {
+        ...buildChordProOptionsFromUI(chordProUi),
+        formatMode: 'fakebook' as const,
+      };
+      const result = await convertMusicXmlToChordPro({ filename: loadedFilename, xmlText: loadedXmlText }, options);
+      const tempo = parseTempoFromMusicXml(loadedXmlText);
+      const fallbackTitle = getBaseFilename(loadedFilename);
+      const csmpn = buildCsmpnFakeBookSource(result.chordPro, fallbackTitle, tempo);
+      setCsmpnFakeBookText(csmpn);
+      setCsmpnWarnings(result.warnings);
+      if (result.error) { showExportError(`CSMPN Fake Book generated with issues: ${result.error}`); return; }
+      showExportSuccess('CSMPN Fake Book generated.');
+    } catch (error) {
+      showExportError(`CSMPN Fake Book conversion failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [chordProUi, loadedFilename, loadedXmlText, showExportError, showExportSuccess]);
 
@@ -1487,6 +1571,9 @@ export default function App() {
                 <button type="button" onClick={() => void generateChordPro()} disabled={!canExportNotation}>
                   Generate ChordPro
                 </button>
+                <button type="button" onClick={() => void generateCsmpnFakeBook()} disabled={!canExportNotation}>
+                  Generate CSMPN Fake Book
+                </button>
                 <button type="button" onClick={() => void copyChordPro(chordProText)} disabled={!chordProText}>
                   Copy
                 </button>
@@ -1511,6 +1598,33 @@ export default function App() {
                 <div className="warning-block">
                   <strong>ChordPro warnings</strong>
                   <ul>{chordProWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
+                </div>
+              )}
+
+              <h2>CSMPN Source (ChordSheet-compatible)</h2>
+              <div className="export-actions">
+                <button type="button" onClick={() => void copyChordPro(csmpnFakeBookText)} disabled={!csmpnFakeBookText}>
+                  Copy CSMPN
+                </button>
+                <button type="button" onClick={() => downloadChordProText(csmpnFakeBookText, `${baseName}.csmpn.txt`)} disabled={!csmpnFakeBookText}>
+                  Download .txt
+                </button>
+                {canShare && (
+                  <button type="button" onClick={() => void shareText(csmpnFakeBookText, `${baseName}.csmpn.txt`)} disabled={!csmpnFakeBookText}>
+                    Share
+                  </button>
+                )}
+              </div>
+              <textarea
+                className="chordpro-output"
+                value={csmpnFakeBookText}
+                placeholder="Generated CSMPN fake-book source will appear here..."
+                wrap="off" spellCheck={false} readOnly
+              />
+              {csmpnWarnings.length > 0 && (
+                <div className="warning-block">
+                  <strong>CSMPN warnings</strong>
+                  <ul>{csmpnWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
                 </div>
               )}
 
