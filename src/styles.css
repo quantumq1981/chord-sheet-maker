@@ -231,6 +231,20 @@ select:disabled {
     width: 100% !important;
     min-height: 0 !important;
   }
+
+  /* Each OSMD SVG page gets its own printed page */
+  .score-container svg {
+    display: block;
+    page-break-after: always;
+    break-after: page;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  .score-container svg:last-child {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
 }
 
 @media (max-width: 1100px) {

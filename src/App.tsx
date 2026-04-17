@@ -108,95 +108,16 @@ const OMR_POLL_SLOWDOWN_AFTER_MS = 30000;
 const IOS_USER_AGENT = /iPad|iPhone|iPod/;
 const PRINT_ZOOM = 1.0;
 
-type MutableEngravingRules = OpenSheetMusicDisplay['EngravingRules'] & {
-  PageWidth?: number;
-};
-
-type EngravingRulesSnapshot = Partial<{
-  PageWidth: number;
-  PageHeight: number;
-  PageTopMargin: number;
-  PageBottomMargin: number;
-  PageLeftMargin: number;
-  PageRightMargin: number;
-  SystemLeftMargin: number;
-  SystemRightMargin: number;
-}> & {
-  PageFormatWidth?: number;
-  PageFormatHeight?: number;
-};
-
-function getRuleValue(rules: MutableEngravingRules, key: keyof EngravingRulesSnapshot): number | undefined {
-  if (!(key in rules)) return undefined;
-  const value = (rules as unknown as Record<string, unknown>)[key];
-  return typeof value === 'number' ? value : undefined;
-}
-
-function setRuleValue(rules: MutableEngravingRules, key: keyof EngravingRulesSnapshot, value: number): void {
-  if (!(key in rules)) return;
-  (rules as unknown as Record<string, unknown>)[key] = value;
-}
-
-function snapshotEngravingRules(osmd: OpenSheetMusicDisplay): EngravingRulesSnapshot {
-  const rules = osmd.EngravingRules as MutableEngravingRules;
-  const pageFormat = 'PageFormat' in rules
-    ? (rules.PageFormat as { width?: number; height?: number } | undefined)
-    : undefined;
-
-  return {
-    PageWidth: getRuleValue(rules, 'PageWidth'),
-    PageHeight: getRuleValue(rules, 'PageHeight'),
-    PageTopMargin: getRuleValue(rules, 'PageTopMargin'),
-    PageBottomMargin: getRuleValue(rules, 'PageBottomMargin'),
-    PageLeftMargin: getRuleValue(rules, 'PageLeftMargin'),
-    PageRightMargin: getRuleValue(rules, 'PageRightMargin'),
-    SystemLeftMargin: getRuleValue(rules, 'SystemLeftMargin'),
-    SystemRightMargin: getRuleValue(rules, 'SystemRightMargin'),
-    PageFormatWidth: typeof pageFormat?.width === 'number' ? pageFormat.width : undefined,
-    PageFormatHeight: typeof pageFormat?.height === 'number' ? pageFormat.height : undefined,
-  };
-}
-
 function applyPrintProfile(osmd: OpenSheetMusicDisplay, pageSize: PrintPageSize): void {
-  const rules = osmd.EngravingRules as MutableEngravingRules;
-  const formatId = pageSize === 'letter' ? 'Letter_P' : 'A4_P';
-  osmd.setPageFormat(formatId);
-
-  if (pageSize === 'letter') {
-    setRuleValue(rules, 'PageWidth', 8.5);
-    setRuleValue(rules, 'PageHeight', 11);
-    setRuleValue(rules, 'PageTopMargin', 0.5);
-    setRuleValue(rules, 'PageBottomMargin', 0.5);
-    setRuleValue(rules, 'PageLeftMargin', 0.5);
-    setRuleValue(rules, 'PageRightMargin', 0.5);
-  } else {
-    setRuleValue(rules, 'PageWidth', 210);
-    setRuleValue(rules, 'PageHeight', 297);
-    setRuleValue(rules, 'PageTopMargin', 12);
-    setRuleValue(rules, 'PageBottomMargin', 12);
-    setRuleValue(rules, 'PageLeftMargin', 12);
-    setRuleValue(rules, 'PageRightMargin', 12);
-  }
+  // setPageFormat handles all internal dimension/margin values in OSMD's own coordinate
+  // system. Do NOT override PageWidth/PageHeight/margins after this call — those properties
+  // use OSMD abstract units, not inches or mm, and passing inch values would make each
+  // "page" ~20× too narrow, producing dozens of near-empty pages in the output.
+  osmd.setPageFormat(pageSize === 'letter' ? 'Letter_P' : 'A4_P');
 }
 
-function restoreEngravingRules(osmd: OpenSheetMusicDisplay, snapshot: EngravingRulesSnapshot): void {
-  const rules = osmd.EngravingRules as MutableEngravingRules;
-
-  if (typeof snapshot.PageFormatWidth === 'number' && typeof snapshot.PageFormatHeight === 'number') {
-    osmd.setCustomPageFormat(snapshot.PageFormatWidth, snapshot.PageFormatHeight);
-  }
-
-  const ruleKeys: (keyof EngravingRulesSnapshot)[] = [
-    'PageWidth', 'PageHeight',
-    'PageTopMargin', 'PageBottomMargin',
-    'PageLeftMargin', 'PageRightMargin',
-    'SystemLeftMargin', 'SystemRightMargin',
-  ];
-
-  for (const key of ruleKeys) {
-    const value = snapshot[key];
-    if (typeof value === 'number') setRuleValue(rules, key, value);
-  }
+function restoreDisplayMode(osmd: OpenSheetMusicDisplay): void {
+  osmd.setPageFormat('Endless');
 }
 
 // ─── General helpers ──────────────────────────────────────────────────────────
@@ -256,6 +177,57 @@ function triggerBlobDownload(blob: Blob, filename: string, iOSFallbackToTab = fa
 
 function serializeSvg(svg: SVGSVGElement): string {
   return new XMLSerializer().serializeToString(svg);
+}
+
+function stitchSvgsToSingle(svgs: SVGSVGElement[]): string {
+  if (svgs.length === 1) return serializeSvg(svgs[0]);
+  const serializer = new XMLSerializer();
+  let maxWidth = 0;
+  let totalHeight = 0;
+  const pages = svgs.map(svg => {
+    const vb = svg.viewBox.baseVal;
+    const w = (vb && vb.width > 0) ? vb.width : (svg.getBoundingClientRect().width || 800);
+    const h = (vb && vb.height > 0) ? vb.height : (svg.getBoundingClientRect().height || 1100);
+    const serialized = serializer.serializeToString(svg);
+    // Strip the root <svg> wrapper so we can embed the content in a <g> group
+    const inner = serialized.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+    maxWidth = Math.max(maxWidth, w);
+    totalHeight += h;
+    return { w, h, inner };
+  });
+  let y = 0;
+  const groups = pages.map(({ h, inner }) => {
+    const g = `<g transform="translate(0,${y})">${inner}</g>`;
+    y += h;
+    return g;
+  });
+  return (
+    `<?xml version="1.0" encoding="utf-8"?>\n` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+    `width="${maxWidth}" height="${totalHeight}" viewBox="0 0 ${maxWidth} ${totalHeight}">\n` +
+    groups.join('\n') +
+    `\n</svg>`
+  );
+}
+
+async function stitchCanvases(svgs: SVGSVGElement[], scale: number): Promise<HTMLCanvasElement> {
+  const canvases = await Promise.all(svgs.map(svg => svgToCanvas(svg, scale)));
+  if (canvases.length === 1) return canvases[0];
+  const totalWidth = Math.max(...canvases.map(c => c.width));
+  const totalHeight = canvases.reduce((sum, c) => sum + c.height, 0);
+  const composite = document.createElement('canvas');
+  composite.width = totalWidth;
+  composite.height = totalHeight;
+  const ctx = composite.getContext('2d');
+  if (!ctx) throw new Error('Canvas context unavailable.');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, totalWidth, totalHeight);
+  let yOffset = 0;
+  for (const canvas of canvases) {
+    ctx.drawImage(canvas, 0, yOffset);
+    yOffset += canvas.height;
+  }
+  return composite;
 }
 
 async function svgToCanvas(svg: SVGSVGElement, scale: number): Promise<HTMLCanvasElement> {
@@ -1155,24 +1127,25 @@ export default function App() {
   }, [baseName, diagnostics, loadedFilename, loadedXmlText, renderError, showExportError, showExportSuccess, xmlWarnings]);
 
   const exportSvg = useCallback(() => {
-    const svg = getRenderedSvgs(containerRef.current)[0];
-    if (!svg) { showExportError('No rendered score found.'); return; }
+    const svgs = getRenderedSvgs(containerRef.current);
+    if (svgs.length === 0) { showExportError('No rendered score found.'); return; }
     try {
-      triggerBlobDownload(new Blob([serializeSvg(svg)], { type: 'image/svg+xml;charset=utf-8' }), `${baseName}.page1.svg`);
-      showExportSuccess('Exported first SVG page.');
+      const combined = stitchSvgsToSingle(svgs);
+      triggerBlobDownload(new Blob([combined], { type: 'image/svg+xml;charset=utf-8' }), `${baseName}.svg`);
+      showExportSuccess(`Exported ${svgs.length} page(s) as SVG.`);
     } catch (error) {
       showExportError(`SVG export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, [baseName, showExportError, showExportSuccess]);
 
   const exportPng = useCallback(async () => {
-    const svg = getRenderedSvgs(containerRef.current)[0];
-    if (!svg) { showExportError('No rendered score found.'); return; }
+    const svgs = getRenderedSvgs(containerRef.current);
+    if (svgs.length === 0) { showExportError('No rendered score found.'); return; }
     try {
-      const canvas = await svgToCanvas(svg, 2);
+      const canvas = await stitchCanvases(svgs, 2);
       const blob = await canvasToBlob(canvas, 'image/png');
       triggerBlobDownload(blob, `${baseName}.png`, true);
-      showExportSuccess('Exported first page as PNG.');
+      showExportSuccess(`Exported ${svgs.length} page(s) as PNG.`);
     } catch (error) {
       showExportError(`PNG export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1188,7 +1161,6 @@ export default function App() {
     const unit = isLetter ? 'in' : 'mm';
     const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
     const margin = isLetter ? 0.5 : 12;
-    const rulesSnapshot = snapshotEngravingRules(osmd);
     const zoomSnapshot = osmd.Zoom;
 
     try {
@@ -1225,7 +1197,7 @@ export default function App() {
     } catch (error) {
       showExportError(`PDF export failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
-      restoreEngravingRules(osmd, rulesSnapshot);
+      restoreDisplayMode(osmd);
       osmd.Zoom = zoomSnapshot;
       osmd.render();
     }
@@ -1234,14 +1206,13 @@ export default function App() {
   const printScore = useCallback(() => {
     const osmd = osmdRef.current;
     if (!osmd || renderedPageCount === 0) { showExportError('No rendered score found.'); return; }
-    const rulesSnapshot = snapshotEngravingRules(osmd);
     const zoomSnapshot = osmd.Zoom;
     let restored = false;
     const restoreAfterPrint = () => {
       if (restored) return;
       restored = true;
       window.removeEventListener('afterprint', restoreAfterPrint);
-      restoreEngravingRules(osmd, rulesSnapshot);
+      restoreDisplayMode(osmd);
       osmd.Zoom = zoomSnapshot;
       osmd.render();
     };
@@ -1828,10 +1799,10 @@ export default function App() {
                   Download Diagnostics JSON
                 </button>
                 <button type="button" onClick={exportSvg} disabled={!canExportNotation}>
-                  Export SVG (first page)
+                  Export SVG (all pages)
                 </button>
                 <button type="button" onClick={() => void exportPng()} disabled={!canExportNotation}>
-                  Export PNG (first page)
+                  Export PNG (all pages)
                 </button>
                 <button type="button" onClick={() => void exportPdf()} disabled={!canExportNotation}>
                   Generate PDF
