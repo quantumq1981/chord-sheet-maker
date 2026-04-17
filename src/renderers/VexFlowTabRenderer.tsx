@@ -1,16 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  Renderer,
-  TabStave,
-  TabNote,
-  Voice,
-  Formatter,
-  GhostNote,
-  Annotation,
-  BarlineType,
-  type RenderContext,
-} from 'vexflow';
+import vexflow from 'vexflow';
 import type { VexTabMeasure, VexTabScore } from '../converters/musicXMLtoVexFlow';
+
+const VF: any = vexflow;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -105,7 +97,7 @@ function renderScore(
   const svgWidth = Math.max(containerWidth, 200);
   const svgHeight = STAVE_Y_START + totalRows * ROW_HEIGHT + 40;
 
-  const renderer = new Renderer(container, Renderer.Backends.SVG);
+  const renderer = new VF.Renderer(container, VF.Renderer.Backends.SVG);
   renderer.resize(svgWidth, svgHeight);
   const ctx = renderer.getContext();
   ctx.setFont('Arial', fontSize);
@@ -143,7 +135,7 @@ interface RowOptions {
 }
 
 function renderRow(
-  ctx: RenderContext,
+  ctx: any,
   measures: VexTabMeasure[],
   opts: RowOptions,
 ): void {
@@ -174,7 +166,7 @@ function renderRow(
     // Stave width: first measure gets extra room for clef
     const staveWidth = isFirstInRow ? measureWidth + firstStaveExtra : measureWidth;
 
-    const stave = new TabStave(x, yTop, staveWidth);
+    const stave = new VF.TabStave(x, yTop, staveWidth);
 
     if (isFirstInRow) {
       stave.addClef('tab');
@@ -194,10 +186,10 @@ function renderRow(
 
     // Repeat barlines
     if (measure.repeatStart) {
-      stave.setBegBarType(BarlineType.REPEAT_BEGIN);
+      stave.setBegBarType(VF.BarlineType.REPEAT_BEGIN);
     }
     if (measure.repeatEnd) {
-      stave.setEndBarType(BarlineType.REPEAT_END);
+      stave.setEndBarType(VF.BarlineType.REPEAT_END);
     }
 
     stave.setContext(ctx).draw();
@@ -212,17 +204,17 @@ function renderRow(
 }
 
 function renderMeasureNotes(
-  ctx: RenderContext,
-  stave: TabStave,
+  ctx: any,
+  stave: any,
   measure: VexTabMeasure,
   timeSig: { beats: number; beatType: number },
 ): void {
-  const tickables = measure.notes.map((note, idx): TabNote | GhostNote => {
+  const tickables = measure.notes.map((note, idx): any => {
     if (note.isRest || note.positions.every((p) => p.fret === 'x')) {
-      return new GhostNote({ duration: note.duration.replace('d', '') });
+      return new VF.GhostNote({ duration: note.duration.replace('d', '') });
     }
 
-    const tabNote = new TabNote({
+    const tabNote = new VF.TabNote({
       positions: note.positions.map((p) => ({ str: p.str, fret: p.fret })),
       duration: note.duration.replace('d', ''),  // VexFlow handles dots separately
     });
@@ -230,20 +222,20 @@ function renderMeasureNotes(
     // Attach chord symbol annotation above the stave
     const sym = measure.chordSymbols.find((cs) => cs.noteIndex === idx);
     if (sym) {
-      const ann = new Annotation(sym.text)
-        .setVerticalJustification(Annotation.VerticalJustify.TOP);
+      const ann = new VF.Annotation(sym.text)
+        .setVerticalJustification(VF.Annotation.VerticalJustify.TOP);
       tabNote.addModifier(ann, 0);
     }
 
     return tabNote;
   });
 
-  const voice = new Voice({ numBeats: timeSig.beats, beatValue: timeSig.beatType });
-  voice.setMode(Voice.Mode.SOFT);
+  const voice = new VF.Voice({ numBeats: timeSig.beats, beatValue: timeSig.beatType });
+  voice.setMode(VF.Voice.Mode.SOFT);
   voice.addTickables(tickables);
 
   try {
-    new Formatter().joinVoices([voice]).format([voice], stave.getWidth() - 30);
+    new VF.Formatter().joinVoices([voice]).format([voice], stave.getWidth() - 30);
   } catch {
     // If formatting fails (e.g. mismatched tick count), just attempt to draw anyway
   }
