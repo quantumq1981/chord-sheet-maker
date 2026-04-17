@@ -161,9 +161,7 @@ function renderRow(
       ? `${firstMeasure.timeSignature.beats}/${firstMeasure.timeSignature.beatType}`
       : null;
 
-  const firstStaveExtra = isFirstRow
-    ? CLEF_WIDTH + (firstTimeSig ? TIME_SIG_WIDTH : 0)
-    : CLEF_WIDTH + (firstTimeSig ? TIME_SIG_WIDTH : 0);
+  const firstStaveExtra = CLEF_WIDTH + (firstTimeSig ? TIME_SIG_WIDTH : 0);
 
   const totalStaveWidth = svgWidth - STAVE_X_MARGIN * 2;
   const measureWidth = (totalStaveWidth - firstStaveExtra) / measures.length;
