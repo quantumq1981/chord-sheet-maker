@@ -432,6 +432,11 @@ select:disabled {
   margin-bottom: 0.75rem;
 }
 
+.transpose-row--topbar {
+  margin-bottom: 0;
+  margin-left: auto;
+}
+
 .transpose-label {
   font-weight: 600;
   font-size: 0.9rem;
@@ -442,6 +447,11 @@ select:disabled {
   min-width: 2.5rem;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+.transpose-meta {
+  font-size: 0.82rem;
+  color: #475569;
 }
 
 /* ── Chord chart viewport ─────────────────────────────────────────────────── */

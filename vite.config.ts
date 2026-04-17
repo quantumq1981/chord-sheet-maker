@@ -2,7 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  base: '/chord-sheet-maker/',
+  // Use relative asset paths so the app works on both user/organization
+  // pages (https://<user>.github.io/) and project pages subpaths.
+  base: './',
   plugins: [react()],
   build: {
     // Target modern browsers only — avoids unnecessary transpilation and
