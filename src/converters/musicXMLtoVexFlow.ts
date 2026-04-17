@@ -237,10 +237,8 @@ export function musicXMLToVexTabScore(
   for (const measureEl of Array.from(selectedPart.querySelectorAll(':scope > measure'))) {
     const measure = parseMeasure(
       measureEl,
-      doc,
       openMidis,
       { currentBeats, currentBeatType, divisions, outOfRangeCount },
-      warnings,
     );
 
     // Update running state
@@ -285,10 +283,8 @@ interface MeasureParseState {
 
 function parseMeasure(
   measureEl: Element,
-  fullDoc: Document,
   openMidis: number[],
   state: MeasureParseState,
-  warnings: string[],
 ): VexTabMeasure & { _divisions?: number; _outOfRange?: number } {
   let { divisions } = state;
   let timeSigChange: { beats: number; beatType: number } | undefined;

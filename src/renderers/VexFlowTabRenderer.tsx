@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import {
+import Vex from 'vexflow';
+import type { VexTabMeasure, VexTabScore } from '../converters/musicXMLtoVexFlow';
+
+const {
   Renderer,
   TabStave,
   TabNote,
@@ -7,10 +10,10 @@ import {
   Formatter,
   GhostNote,
   Annotation,
-  BarlineType,
-  type RenderContext,
-} from 'vexflow';
-import type { VexTabMeasure, VexTabScore } from '../converters/musicXMLtoVexFlow';
+  Barline,
+} = Vex.Flow;
+
+type RenderContext = Vex.IRenderContext;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -194,10 +197,10 @@ function renderRow(
 
     // Repeat barlines
     if (measure.repeatStart) {
-      stave.setBegBarType(BarlineType.REPEAT_BEGIN);
+      stave.setBegBarType(Barline.type.REPEAT_BEGIN);
     }
     if (measure.repeatEnd) {
-      stave.setEndBarType(BarlineType.REPEAT_END);
+      stave.setEndBarType(Barline.type.REPEAT_END);
     }
 
     stave.setContext(ctx).draw();
@@ -213,17 +216,20 @@ function renderRow(
 
 function renderMeasureNotes(
   ctx: RenderContext,
-  stave: TabStave,
+  stave: Vex.Flow.TabStave,
   measure: VexTabMeasure,
   timeSig: { beats: number; beatType: number },
 ): void {
-  const tickables = measure.notes.map((note, idx): TabNote | GhostNote => {
+  const tickables = measure.notes.map((note, idx): Vex.Flow.TabNote | Vex.Flow.GhostNote => {
     if (note.isRest || note.positions.every((p) => p.fret === 'x')) {
       return new GhostNote({ duration: note.duration.replace('d', '') });
     }
 
     const tabNote = new TabNote({
-      positions: note.positions.map((p) => ({ str: p.str, fret: p.fret })),
+      positions: note.positions.map((p) => ({
+        str: p.str,
+        fret: typeof p.fret === 'number' ? p.fret : 0,
+      })),
       duration: note.duration.replace('d', ''),  // VexFlow handles dots separately
     });
 
@@ -238,7 +244,7 @@ function renderMeasureNotes(
     return tabNote;
   });
 
-  const voice = new Voice({ numBeats: timeSig.beats, beatValue: timeSig.beatType });
+  const voice = new Voice({ num_beats: timeSig.beats, beat_value: timeSig.beatType });
   voice.setMode(Voice.Mode.SOFT);
   voice.addTickables(tickables);
 
