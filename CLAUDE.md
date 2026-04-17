@@ -14,6 +14,7 @@ This repo is the **MusicXML normalizer / converter workbench**. It ingests struc
 |---|---|
 | Framework | React 18 + Vite + TypeScript 5.6 |
 | Score rendering | OpenSheetMusicDisplay (OSMD) v1.8.9 |
+| Tab rendering | VexFlow v5.0 |
 | PDF export | jsPDF v2.5.2 |
 | ZIP handling | JSZip v3.10.1 |
 | Backend (optional) | FastAPI + Audiveris CLI |
@@ -26,14 +27,16 @@ This repo is the **MusicXML normalizer / converter workbench**. It ingests struc
 ```
 src/
 ├── main.tsx                     Entry point
-├── App.tsx                      All app state, render orchestration, export logic (~1900 lines)
+├── App.tsx                      All app state, render orchestration, export logic (~2100 lines)
 ├── styles.css                   UI + print media styles
 ├── models/
 │   └── ChordChartModel.ts       Token/Line/Section/Document data types
 ├── renderers/
-│   └── ChordChart.tsx           React component for chord chart display + transpose
+│   ├── ChordChart.tsx           React component for chord chart display + transpose
+│   └── VexFlowTabRenderer.tsx   Guitar tab renderer using VexFlow v5 SVG backend
 ├── converters/
 │   ├── musicXMLtochordpro.ts    Core MusicXML→ChordPro engine (~1000 lines)
+│   ├── musicXMLtoVexFlow.ts     MusicXML→VexFlow tab data converter
 │   ├── chordSymbolParser.ts     Free-text chord inference (Finale-style direction/words)
 │   ├── xmlIntakeAnalyzer.ts     XML complexity analysis + reducibility scoring
 │   └── __tests__/
@@ -66,11 +69,12 @@ backend/
 
 ## App Modes
 
-The app has three top-level states (`AppMode`):
+The app has four top-level states (`AppMode`):
 
 - **`empty`** — no file loaded, shows upload drop zone
 - **`notation`** — MusicXML/MXL loaded, OSMD renders the score in SVG; full export panel available
 - **`chord-chart`** — text chord chart loaded (ChordPro/UG/COW); ChordChart component renders
+- **`tablature`** — MusicXML/MXL loaded, VexFlow renders guitar tab; accessible via "Tab View" button from notation mode
 
 ---
 
@@ -116,6 +120,28 @@ Strategy: OSMD SVG → Canvas (1.5× scale) → JPEG → jsPDF
 2. `window.print()` — browser native print dialog
 3. CSS `@media print` hides UI, sets `break-after: page` between OSMD SVGs
 4. Restore via `afterprint` event (+ 1s fallback timeout)
+
+### Guitar Tablature (`tablature` mode)
+
+File: `src/converters/musicXMLtoVexFlow.ts` + `src/renderers/VexFlowTabRenderer.tsx`
+
+1. "Tab View" button appears in top bar when MusicXML is loaded in notation mode
+2. `musicXMLToVexTabScore(xmlText, tuning, partIndex)` converts MusicXML to `VexTabScore`
+   - Parses notes, pitches, durations, harmonies, repeat markers
+   - Maps MIDI pitches to string/fret positions using tuning array (lowest-fret heuristic)
+   - Out-of-range notes shown as muted (×) with a warning
+3. `VexFlowTabRenderer` renders the `VexTabScore` via VexFlow SVG backend
+   - ResizeObserver auto-fits to container width
+   - Measures laid out in rows (configurable measures-per-row)
+   - Chord symbols shown above notes via VexFlow Annotation modifiers
+   - Repeat barlines rendered via VexFlow BarlineType.REPEAT_BEGIN/END
+4. Tab-specific exports: SVG, PNG (2× raster), PDF (jsPDF raster pipeline)
+5. Settings panel: tuning presets + custom strings, font size, measures/row, part selector
+
+**Tuning presets**: Standard EADGBe, Drop D, Open G, Open D, Open E, DADGAD, Half Step Down, Bass EADG
+
+**Pitch→fret algorithm**: sort notes by pitch descending; for each note pick the string with the
+lowest valid fret (0–22) not already occupied by another note in the chord group.
 
 ### SVG Export (`exportSvg`)
 
@@ -217,7 +243,7 @@ Backend: FastAPI at `backend/app/main.py` + Audiveris CLI
 ## State Architecture (`App.tsx`)
 
 ```
-AppMode: 'empty' | 'notation' | 'chord-chart'
+AppMode: 'empty' | 'notation' | 'chord-chart' | 'tablature'
 
 Notation state:
   loadedXmlText, loadedFilename, isMxl, zoom, pdfPageSize
@@ -228,6 +254,15 @@ Notation state:
 
 Chart state:
   chartDocument, transposeSteps, detectedFormatLabel, chartChordProText
+
+Tablature state:
+  tabScoreData (VexTabScore | null)  — computed by useMemo from loadedXmlText+tuning+partIndex
+  tabTuning (string[])               — open-string note names high→low, e.g. ['E4','B3','G3','D3','A2','E2']
+  tabTuningPreset (string)           — name of the active preset or 'Custom'
+  tabFontSize (number)               — px, controls VexFlow font size
+  tabMeasuresPerRow (number)         — how many measures to lay out per system row
+  tabPartIndex (number)              — index into score.parts for multi-part files
+  tabRenderError (string)            — last VexFlow render error, cleared on success
 
 OMR state:
   omrFile, omrJobId, omrJobStatus, omrSummary, omrPollingTimerRef
@@ -306,6 +341,9 @@ Test files live in `src/**/__tests__/`:
 | PDF is rasterized (no vector text) | Intentional — see NOTES.md |
 | Print dialog formatting relies on correct OSMD page format | Fixed 2026-04-17 |
 | SVG/PNG previously only exported first page | Fixed 2026-04-17 (all-page stitch) |
+| VexFlow tab added for guitar tablature | Added 2026-04-17 |
+| Tab dotted notes render as undotted duration | Known MVP limitation |
+| Tab only renders first selected part | By design (part selector in UI) |
 | No repeat expansion in ChordPro | MVP — future work |
 | Timewise MusicXML requires in-memory conversion | Logged in diagnostics |
 | OMR requires optional backend (not on GitHub Pages) | By design |

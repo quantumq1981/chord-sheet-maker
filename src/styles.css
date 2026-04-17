@@ -332,6 +332,65 @@ select:disabled {
   color: #7e22ce;
 }
 
+.mode-badge--tablature {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.mode-badge--tab-toggle {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+/* ── Tab container (VexFlow render target) ──────────────────────────────── */
+
+.tab-container {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.tab-container svg {
+  display: block;
+  max-width: 100%;
+}
+
+.tab-empty {
+  padding: 1.5rem;
+  color: #64748b;
+}
+
+/* ── Tab settings controls ──────────────────────────────────────────────── */
+
+.tab-tuning-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.3rem;
+  margin-bottom: 0.75rem;
+}
+
+.tab-tuning-input {
+  width: 100%;
+  border: 1px solid #94a3b8;
+  border-radius: 0.375rem;
+  padding: 0.3rem 0.25rem;
+  font-size: 0.8rem;
+  text-align: center;
+  font-family: monospace;
+}
+
+.tab-settings-row {
+  margin-bottom: 0.75rem;
+}
+
+.tab-range {
+  width: 100%;
+  margin-top: 0.25rem;
+  accent-color: #2563eb;
+}
+
 /* ── Reducibility badge ───────────────────────────────────────────────────── */
 
 .reducibility-badge {

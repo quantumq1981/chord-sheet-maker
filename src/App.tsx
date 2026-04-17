@@ -10,6 +10,7 @@ import {
   type ConverterDiagnostics,
   type RepeatStrategy,
 } from './converters/musicXMLtochordpro';
+import { musicXMLToVexTabScore, type VexTabScore } from './converters/musicXMLtoVexFlow';
 import {
   sniffFormatFromBytes,
   isMusicXmlFormat,
@@ -19,6 +20,7 @@ import {
 import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord } from './renderers/ChordChart';
+import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
 import OmrImportPanel from './components/OmrImportPanel';
 import {
   createOmrJob,
@@ -43,7 +45,7 @@ import { loadMusicXmlFromString } from './utils/loadMusicXmlFromString';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AppMode = 'empty' | 'notation' | 'chord-chart';
+type AppMode = 'empty' | 'notation' | 'chord-chart' | 'tablature';
 
 type Diagnostics = {
   isValidXml: boolean;
@@ -98,6 +100,19 @@ const FILE_INPUT_ACCEPT = [
 
 
 const OMR_FILE_INPUT_ACCEPT = ['.pdf', '.png', '.jpg', '.jpeg', 'application/pdf', 'image/png', 'image/jpeg'].join(',');
+
+// ─── Guitar tuning presets ────────────────────────────────────────────────────
+
+const TUNING_PRESETS: Record<string, string[]> = {
+  'Standard (EADGBe)':  ['E4', 'B3', 'G3', 'D3', 'A2', 'E2'],
+  'Drop D (DADGBe)':    ['E4', 'B3', 'G3', 'D3', 'A2', 'D2'],
+  'Open G (DGDGBd)':    ['D4', 'B3', 'G3', 'D3', 'G2', 'D2'],
+  'Open D (DADf#Ad)':   ['D4', 'A3', 'F#3', 'D3', 'A2', 'D2'],
+  'Open E (EBE G#Be)':  ['E4', 'B3', 'G#3', 'E3', 'B2', 'E2'],
+  'DADGAD':             ['D4', 'A3', 'G3', 'D3', 'A2', 'D2'],
+  'Half Step Down (Eb)':['Eb4','Bb3','Gb3','Db3','Ab2','Eb2'],
+  'Bass (EADGb)':       ['G2', 'D2', 'A1', 'E1'],
+};
 const OMR_ALLOWED_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg']);
 const OMR_POLL_MS_FAST = 2000;
 const OMR_POLL_MS_SLOW = 4500;
@@ -664,6 +679,15 @@ export default function App() {
   const [chartChordProText, setChartChordProText] = useState('');
   const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
 
+  // ── Tablature mode state ──
+  const [tabTuning, setTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
+  const [tabTuningPreset, setTabTuningPreset] = useState('Standard (EADGBe)');
+  const [tabFontSize, setTabFontSize] = useState(12);
+  const [tabMeasuresPerRow, setTabMeasuresPerRow] = useState(4);
+  const [tabPartIndex, setTabPartIndex] = useState(0);
+  const [tabRenderError, setTabRenderError] = useState('');
+  const [tabScoreData, setTabScoreData] = useState<VexTabScore | null>(null);
+
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
     if (!loadedXmlText) return null;
@@ -683,6 +707,16 @@ export default function App() {
     if (!diagnostics.hasDivisions) list.push('No <divisions> found — rhythmic rendering may be unreliable.');
     return list;
   }, [diagnostics]);
+
+  // ── Tab score computation ──
+  // Re-runs only when XML, tuning, or selected part changes.
+  const tabScore = useMemo<VexTabScore | null>(() => {
+    if (!loadedXmlText || !diagnostics?.isMusicXml) return null;
+    return musicXMLToVexTabScore(loadedXmlText, tabTuning, tabPartIndex);
+  }, [loadedXmlText, tabTuning, tabPartIndex, diagnostics?.isMusicXml]);
+
+  // Sync computed score into state so the renderer gets it reactively
+  useEffect(() => { setTabScoreData(tabScore); }, [tabScore]);
 
   // ── OSMD initialisation ──
   useEffect(() => {
@@ -878,6 +912,10 @@ export default function App() {
     setDetectedFormatLabel('');
     setChartChordProText('');
     setChartChordProWarnings([]);
+    // Tablature
+    setTabScoreData(null);
+    setTabRenderError('');
+    setTabPartIndex(0);
     // OMR
     resetOmrState();
   }, [resetOmrState]);
@@ -1151,6 +1189,73 @@ export default function App() {
     }
   }, [baseName, showExportError, showExportSuccess]);
 
+  // ── Tab exports: grab the VexFlow SVG from the rendered div ──
+
+  const getTabSvgEl = useCallback((): SVGSVGElement | null => {
+    // The tab container div holds a single SVG element rendered by VexFlow
+    const tabDiv = document.querySelector('.tab-container svg') as SVGSVGElement | null;
+    return tabDiv;
+  }, []);
+
+  const exportTabSvg = useCallback(() => {
+    const svg = getTabSvgEl();
+    if (!svg) { showExportError('No tab SVG found. Generate the tab first.'); return; }
+    try {
+      triggerBlobDownload(
+        new Blob([serializeSvg(svg)], { type: 'image/svg+xml;charset=utf-8' }),
+        `${baseName}.tab.svg`,
+      );
+      showExportSuccess('Tab exported as SVG.');
+    } catch (err) {
+      showExportError(`Tab SVG export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [baseName, getTabSvgEl, showExportError, showExportSuccess]);
+
+  const exportTabPng = useCallback(async () => {
+    const svg = getTabSvgEl();
+    if (!svg) { showExportError('No tab SVG found. Generate the tab first.'); return; }
+    try {
+      const canvas = await svgToCanvas(svg, 2);
+      const blob = await canvasToBlob(canvas, 'image/png');
+      triggerBlobDownload(blob, `${baseName}.tab.png`, true);
+      showExportSuccess('Tab exported as PNG.');
+    } catch (err) {
+      showExportError(`Tab PNG export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [baseName, getTabSvgEl, showExportError, showExportSuccess]);
+
+  const exportTabPdf = useCallback(async () => {
+    const svg = getTabSvgEl();
+    if (!svg) { showExportError('No tab SVG found. Generate the tab first.'); return; }
+    const isLetter = pdfPageSize === 'letter';
+    const unit = isLetter ? 'in' : 'mm';
+    const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
+    const margin = isLetter ? 0.5 : 12;
+    try {
+      const canvas = await svgToCanvas(svg, 1.5);
+      const jpegData = canvas.toDataURL('image/jpeg', 0.92);
+      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const availW = pageW - margin * 2;
+      const availH = pageH - margin * 2;
+      const aspect = canvas.width / canvas.height;
+      let w = availW;
+      let h = w / aspect;
+      if (h > availH) { h = availH; w = h * aspect; }
+      const x = (pageW - w) / 2;
+      const y = margin;
+      pdf.addImage(jpegData, 'JPEG', x, y, w, h, undefined, 'FAST');
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+      setPdfFilename(`${baseName}.tab.pdf`);
+      showExportSuccess('Tab PDF ready. Tap Open PDF.');
+    } catch (err) {
+      showExportError(`Tab PDF failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [baseName, getTabSvgEl, pdfPageSize, showExportError, showExportSuccess]);
+
   const exportPdf = useCallback(async (maxPages?: number) => {
     const osmd = osmdRef.current;
     if (!osmd) { showExportError('Renderer is not ready yet.'); return; }
@@ -1378,6 +1483,7 @@ export default function App() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const canExportNotation = appMode === 'notation' && Boolean(loadedXmlText);
+  const canExportTab = appMode === 'tablature' && Boolean(tabScoreData?.measures.length);
 
   return (
     <div className="app-shell">
@@ -1394,12 +1500,34 @@ export default function App() {
           </span>
         )}
 
-        {appMode === 'notation' && (
+        {(appMode === 'notation' || appMode === 'tablature') && (
           <>
-            <span className="mode-badge mode-badge--notation">Notation</span>
-            <button type="button" onClick={() => adjustZoom(-0.1)}>Zoom −</button>
-            <button type="button" onClick={() => adjustZoom(0.1)}>Zoom +</button>
-            <button type="button" onClick={fitWidth}>Fit Width</button>
+            {appMode === 'notation' ? (
+              <>
+                <span className="mode-badge mode-badge--notation">Notation</span>
+                <button type="button" onClick={() => adjustZoom(-0.1)}>Zoom −</button>
+                <button type="button" onClick={() => adjustZoom(0.1)}>Zoom +</button>
+                <button type="button" onClick={fitWidth}>Fit Width</button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('tablature')}
+                >
+                  Tab View
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="mode-badge mode-badge--tablature">Tab View</span>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('notation')}
+                >
+                  Notation
+                </button>
+              </>
+            )}
           </>
         )}
 
@@ -1421,8 +1549,39 @@ export default function App() {
       {/* ── Content area ── */}
       <main className="content-grid">
 
-        {/* ── Left: score viewport OR chord chart ── */}
-        {appMode !== 'chord-chart' ? (
+        {/* ── Left: score viewport, tab view, or chord chart ── */}
+        {appMode === 'chord-chart' ? (
+          <section
+            className={`chord-chart-viewport ${isDragging ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={onDrop}
+          >
+            {chartDocument && (
+              <ChordChart document={chartDocument} transposeSteps={transposeSteps} />
+            )}
+          </section>
+        ) : appMode === 'tablature' ? (
+          <section
+            className={`score-viewport ${isDragging ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={onDrop}
+          >
+            {tabRenderError && (
+              <div className="error-banner">Tab render error: {tabRenderError}</div>
+            )}
+            {tabScoreData && (
+              <VexFlowTabRenderer
+                scoreData={tabScoreData}
+                tuning={tabTuning}
+                fontSize={tabFontSize}
+                measuresPerRow={tabMeasuresPerRow}
+                onRenderError={(e) => setTabRenderError(e)}
+              />
+            )}
+          </section>
+        ) : (
           <section
             className={`score-viewport ${isDragging ? 'dragging' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -1433,17 +1592,6 @@ export default function App() {
               <p className="placeholder">Upload a MusicXML / MXL file or a ChordPro / text chord chart.</p>
             )}
             <div ref={containerRef} className="score-container" />
-          </section>
-        ) : (
-          <section
-            className={`chord-chart-viewport ${isDragging ? 'dragging' : ''}`}
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={onDrop}
-          >
-            {chartDocument && (
-              <ChordChart document={chartDocument} transposeSteps={transposeSteps} />
-            )}
           </section>
         )}
 
@@ -1828,6 +1976,136 @@ export default function App() {
                     {canSharePdf && (
                       <button type="button" onClick={() => void sharePdf()}>Share PDF</button>
                     )}
+                    <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── Tablature mode panel ── */}
+          {appMode === 'tablature' && tabScoreData && (
+            <>
+              <h2>Tab Settings</h2>
+
+              <label className="export-label" htmlFor="tab-tuning-preset">Tuning preset</label>
+              <select
+                id="tab-tuning-preset"
+                value={tabTuningPreset}
+                onChange={(e) => {
+                  const preset = e.target.value;
+                  setTabTuningPreset(preset);
+                  const strings = TUNING_PRESETS[preset];
+                  if (strings) setTabTuning(strings);
+                }}
+              >
+                {Object.keys(TUNING_PRESETS).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              <label className="export-label">Custom tuning (high→low, one per box)</label>
+              <div className="tab-tuning-grid">
+                {tabTuning.map((note, i) => (
+                  <input
+                    key={i}
+                    type="text"
+                    className="tab-tuning-input"
+                    value={note}
+                    aria-label={`String ${i + 1}`}
+                    onChange={(e) => {
+                      const next = [...tabTuning];
+                      next[i] = e.target.value;
+                      setTabTuning(next);
+                      setTabTuningPreset('Custom');
+                    }}
+                  />
+                ))}
+              </div>
+
+              {tabScoreData.parts.length > 1 && (
+                <>
+                  <label className="export-label" htmlFor="tab-part">Part</label>
+                  <select
+                    id="tab-part"
+                    value={tabPartIndex}
+                    onChange={(e) => setTabPartIndex(Number(e.target.value))}
+                  >
+                    {tabScoreData.parts.map((p, i) => (
+                      <option key={p.id} value={i}>{p.name}</option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              <div className="tab-settings-row">
+                <label className="export-label" htmlFor="tab-font-size">
+                  Font size: {tabFontSize}px
+                </label>
+                <input
+                  id="tab-font-size"
+                  type="range"
+                  min={8}
+                  max={20}
+                  value={tabFontSize}
+                  onChange={(e) => setTabFontSize(Number(e.target.value))}
+                  className="tab-range"
+                />
+              </div>
+
+              <div className="tab-settings-row">
+                <label className="export-label" htmlFor="tab-mpr">
+                  Measures per row: {tabMeasuresPerRow}
+                </label>
+                <input
+                  id="tab-mpr"
+                  type="range"
+                  min={1}
+                  max={8}
+                  value={tabMeasuresPerRow}
+                  onChange={(e) => setTabMeasuresPerRow(Number(e.target.value))}
+                  className="tab-range"
+                />
+              </div>
+
+              {tabScoreData.warnings.length > 0 && (
+                <div className="warning-block">
+                  <strong>Tab warnings</strong>
+                  <ul>{tabScoreData.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+                </div>
+              )}
+
+              <h2>Export Tab</h2>
+              <label className="export-label" htmlFor="tab-pdf-size">PDF Page Size</label>
+              <select
+                id="tab-pdf-size"
+                value={pdfPageSize}
+                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                disabled={!canExportTab}
+              >
+                <option value="letter">Letter (Portrait)</option>
+                <option value="a4">A4 (Portrait)</option>
+              </select>
+              <div className="export-actions">
+                <button type="button" onClick={exportTabSvg} disabled={!canExportTab}>
+                  Export Tab SVG
+                </button>
+                <button type="button" onClick={() => void exportTabPng()} disabled={!canExportTab}>
+                  Export Tab PNG
+                </button>
+                <button type="button" onClick={() => void exportTabPdf()} disabled={!canExportTab}>
+                  Generate Tab PDF
+                </button>
+              </div>
+
+              {pdfBlobUrl && (
+                <div className="pdf-ready-box">
+                  <p className="pdf-ready-title">PDF Ready</p>
+                  <div className="pdf-ready-actions">
+                    <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
+                      Open PDF
+                    </a>
+                    <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
                     <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
                   </div>
                 </div>
