@@ -37,6 +37,7 @@ src/
 ├── converters/
 │   ├── musicXMLtochordpro.ts    Core MusicXML→ChordPro engine (~1000 lines)
 │   ├── musicXMLtoVexFlow.ts     MusicXML→VexFlow tab data converter
+│   ├── transposeMusicXML.ts     Global semitone transposition for MusicXML pitch/key/harmony
 │   ├── chordSymbolParser.ts     Free-text chord inference (Finale-style direction/words)
 │   ├── xmlIntakeAnalyzer.ts     XML complexity analysis + reducibility scoring
 │   └── __tests__/
@@ -253,7 +254,12 @@ Notation state:
   osmdRef (OSMD instance), containerRef (DOM div)
 
 Chart state:
-  chartDocument, transposeSteps, detectedFormatLabel, chartChordProText
+  chartDocument, transposeSemitones, detectedFormatLabel, chartChordProText
+
+Global transpose:
+  transposeSemitones              — shared by notation + chord-chart render/export paths
+  pristineXmlText                 — unmodified MusicXML source used as transpose base
+  loadedXmlText                   — current transposed MusicXML fed to OSMD/export/tab converters
 
 Tablature state:
   tabScoreData (VexTabScore | null)  — computed by useMemo from loadedXmlText+tuning+partIndex

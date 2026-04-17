@@ -17,6 +17,7 @@ import {
   isChordChartFormat,
   asSourceFormat,
 } from './ingest/sniffFormat';
+import { transposeMusicXML } from './converters/transposeMusicXML';
 import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord } from './renderers/ChordChart';
@@ -343,6 +344,23 @@ function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics:
   };
 }
 
+const FIFTHS_MAJOR_KEYS = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#'] as const;
+const FIFTHS_MINOR_KEYS = ['Abm', 'Ebm', 'Bbm', 'Fm', 'Cm', 'Gm', 'Dm', 'Am', 'Em', 'Bm', 'F#m', 'C#m', 'G#m', 'D#m', 'A#m'] as const;
+
+function transposeKeyDisplayFromXml(xmlText: string, semitones: number): string | null {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'application/xml');
+  const keyEl = doc.querySelector('attributes > key');
+  if (!keyEl) return null;
+  const fifths = Number.parseInt(keyEl.querySelector('fifths')?.textContent ?? '', 10);
+  if (!Number.isFinite(fifths) || fifths < -7 || fifths > 7) return null;
+  const mode = (keyEl.querySelector('mode')?.textContent ?? 'major').trim().toLowerCase();
+  const keyTable = mode === 'minor' ? FIFTHS_MINOR_KEYS : FIFTHS_MAJOR_KEYS;
+  const starting = keyTable[fifths + 7];
+  if (!starting) return null;
+  return transposeChord(starting, semitones);
+}
+
 function buildChordProOptionsFromUI(uiState: ChordProUiState) {
   const defaultOptions = getDefaultConvertOptions();
   const formatModeMap: Record<ChordProModeUi, ChordProFormatMode> = {
@@ -655,6 +673,7 @@ export default function App() {
   const didAutoFitRef = useRef(false);
   const xmlLoadedRef = useRef('');
   const [loadedXmlText, setLoadedXmlText] = useState('');
+  const [pristineXmlText, setPristineXmlText] = useState('');
   const [isMxl, setIsMxl] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pdfPageSize, setPdfPageSize] = useState<PdfPageSize>('letter');
@@ -674,7 +693,8 @@ export default function App() {
 
   // ── Chord-chart mode state ──
   const [chartDocument, setChartDocument] = useState<ChordChartDocument | null>(null);
-  const [transposeSteps, setTransposeSteps] = useState(0);
+  const [transposeSemitones, setTransposeSemitones] = useState(0);
+  const [transposeWarnings, setTransposeWarnings] = useState<string[]>([]);
   const [detectedFormatLabel, setDetectedFormatLabel] = useState('');
   const [chartChordProText, setChartChordProText] = useState('');
   const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
@@ -718,6 +738,13 @@ export default function App() {
   // Sync computed score into state so the renderer gets it reactively
   useEffect(() => { setTabScoreData(tabScore); }, [tabScore]);
 
+  useEffect(() => {
+    if (!pristineXmlText) return;
+    const { xml, warnings } = transposeMusicXML(pristineXmlText, transposeSemitones);
+    setLoadedXmlText(xml);
+    setTransposeWarnings(warnings);
+  }, [pristineXmlText, transposeSemitones]);
+
   // ── OSMD initialisation ──
   useEffect(() => {
     if (!containerRef.current || osmdRef.current) return;
@@ -726,7 +753,7 @@ export default function App() {
       drawingParameters: 'default',
     });
     return () => { osmdRef.current = null; };
-  }, []);
+  }, [chordProUi, transposeSemitones]);
 
   // ── OSMD render on XML / zoom change ──
   useEffect(() => {
@@ -823,12 +850,12 @@ export default function App() {
 
     didAutoFitRef.current = false;
     setLoadedFilename(`omr-${jobId}.${loadedFromMxl ? 'mxl' : 'musicxml'}`);
-    setLoadedXmlText(parsedXmlText);
+    setPristineXmlText(parsedXmlText);
     setIsMxl(loadedFromMxl);
     setRenderError('');
     setExportFeedback({ type: 'success', message: 'OMR conversion completed and score loaded.' });
     setChartDocument(null);
-    setTransposeSteps(0);
+    setTransposeWarnings([]);
     setDetectedFormatLabel(loadedFromMxl ? 'MXL (OMR)' : 'MusicXML (OMR)');
     setAppMode('notation');
   }, []);
@@ -894,6 +921,7 @@ export default function App() {
     setExportFeedback(null);
     // Notation
     setLoadedXmlText('');
+    setPristineXmlText('');
     setIsMxl(false);
     setZoom(1);
     setRenderedPageCount(0);
@@ -908,7 +936,8 @@ export default function App() {
     if (containerRef.current) containerRef.current.innerHTML = '';
     // Chart
     setChartDocument(null);
-    setTransposeSteps(0);
+    setTransposeSemitones(0);
+    setTransposeWarnings([]);
     setDetectedFormatLabel('');
     setChartChordProText('');
     setChartChordProWarnings([]);
@@ -933,7 +962,7 @@ export default function App() {
           await extractMusicXmlTextFromFile(file);
         didAutoFitRef.current = false;
         setLoadedFilename(filename);
-        setLoadedXmlText(xmlText);
+        setPristineXmlText(xmlText);
         setIsMxl(loadedFromMxl);
         setRenderError('');
         setExportFeedback(null);
@@ -944,8 +973,8 @@ export default function App() {
         setCsmpnWarnings([]);
         // Clear chord-chart state
         setChartDocument(null);
-        setTransposeSteps(0);
         setDetectedFormatLabel(detected.format === 'mxl' ? 'MXL' : 'MusicXML');
+        setTransposeWarnings([]);
         setChartChordProText('');
         setChartChordProWarnings([]);
         setAppMode('notation');
@@ -964,15 +993,16 @@ export default function App() {
 
         setLoadedFilename(file.name);
         setChartDocument(doc);
-        setTransposeSteps(0);
         setDetectedFormatLabel(formatLabels[sourceFormat] ?? sourceFormat);
-        const chartExport = serializeChordProFromDocument(doc, 0, chordProUi);
+        setTransposeWarnings([]);
+        const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi);
         setChartChordProText(chartExport.text);
         setChartChordProWarnings(chartExport.warnings);
         setRenderError('');
         setExportFeedback(null);
         // Clear notation state
         setLoadedXmlText('');
+        setPristineXmlText('');
         setIsMxl(false);
         setRenderedPageCount(0);
         setPdfBlobUrl(null);
@@ -1083,14 +1113,14 @@ export default function App() {
         const parsedXmlText = loadMusicXmlFromString(response.musicxml ?? '');
         didAutoFitRef.current = false;
         setLoadedFilename(`omr-sync-${getBaseFilename(omrFile.name)}.musicxml`);
-        setLoadedXmlText(parsedXmlText);
+        setPristineXmlText(parsedXmlText);
         setOmrInlineMusicXml(parsedXmlText);
         setIsMxl(false);
         setRenderError('');
         setExportFeedback({ type: 'success', message: 'OMR quick process completed and score loaded.' });
         setChartDocument(null);
-        setTransposeSteps(0);
         setDetectedFormatLabel('MusicXML (OMR Sync)');
+        setTransposeWarnings([]);
         setAppMode('notation');
         setOmrJobStatus('completed');
         setOmrProgressMessage('Completed');
@@ -1437,29 +1467,26 @@ export default function App() {
 
   // ── Chord-chart controls ──
   const adjustTranspose = useCallback((delta: number) => {
-    setTransposeSteps((prev) => ((prev + delta + 12) % 12 + 12) % 12 === 0 && delta < 0
-      ? -12 + ((prev + delta + 12) % 12 + 12) % 12
-      : prev + delta);
+    setTransposeSemitones((prev) => Math.max(-12, Math.min(12, prev + delta)));
   }, []);
 
-  const normalizedTranspose = ((transposeSteps % 12) + 12) % 12;
-  const displayTranspose = normalizedTranspose > 6 ? normalizedTranspose - 12 : normalizedTranspose;
+  const displayTranspose = transposeSemitones;
 
   const chartExportPreview = useMemo(() => {
     if (!chartDocument) return { text: '', warnings: [] as string[] };
-    return serializeChordProFromDocument(chartDocument, transposeSteps, chordProUi);
-  }, [chartDocument, transposeSteps, chordProUi]);
+    return serializeChordProFromDocument(chartDocument, transposeSemitones, chordProUi);
+  }, [chartDocument, transposeSemitones, chordProUi]);
 
   const generateChartCsmpn = useCallback(() => {
     if (!chartDocument) {
       showExportError('Load a chord chart file before generating CSMPN Fake Book.');
       return;
     }
-    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSteps, getBaseFilename(loadedFilename));
+    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, getBaseFilename(loadedFilename));
     setCsmpnFakeBookText(csmpn);
     setCsmpnWarnings([]);
     showExportSuccess('CSMPN Fake Book generated.');
-  }, [chartDocument, transposeSteps, loadedFilename, showExportError, showExportSuccess]);
+  }, [chartDocument, transposeSemitones, loadedFilename, showExportError, showExportSuccess]);
 
   const generateChartChordPro = useCallback(() => {
     if (!chartDocument) {
@@ -1468,17 +1495,38 @@ export default function App() {
     }
     setChartChordProText(chartExportPreview.text);
     setChartChordProWarnings(chartExportPreview.warnings);
-    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSteps, getBaseFilename(loadedFilename));
+    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, getBaseFilename(loadedFilename));
     setCsmpnFakeBookText(csmpn);
     setCsmpnWarnings([]);
     showExportSuccess('ChordPro generated.');
-  }, [chartDocument, chartExportPreview, transposeSteps, loadedFilename, showExportError, showExportSuccess]);
+  }, [chartDocument, chartExportPreview, transposeSemitones, loadedFilename, showExportError, showExportSuccess]);
 
   useEffect(() => {
     if (!chartDocument) return;
     setChartChordProText(chartExportPreview.text);
     setChartChordProWarnings(chartExportPreview.warnings);
   }, [chartDocument, chartExportPreview]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        adjustTranspose(1);
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        adjustTranspose(-1);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [adjustTranspose]);
+
+  const transposeKeyDisplay = useMemo(() => {
+    if (appMode === 'chord-chart') return chartDocument?.key ? transposeChord(chartDocument.key, transposeSemitones) : null;
+    if (!pristineXmlText) return null;
+    return transposeKeyDisplayFromXml(pristineXmlText, transposeSemitones);
+  }, [appMode, chartDocument?.key, pristineXmlText, transposeSemitones]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1536,6 +1584,24 @@ export default function App() {
         )}
 
         {appMode !== 'empty' && (
+          <div className="transpose-row transpose-row--topbar">
+            <span className="transpose-label">Transpose</span>
+            <button type="button" onClick={() => adjustTranspose(-1)} disabled={transposeSemitones <= -12}>−</button>
+            <span className="transpose-value">
+              {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose}
+            </span>
+            <button type="button" onClick={() => adjustTranspose(1)} disabled={transposeSemitones >= 12}>+</button>
+            <button type="button" onClick={() => setTransposeSemitones(0)} disabled={transposeSemitones === 0}>
+              Reset
+            </button>
+            <span className="transpose-meta">
+              {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose} semitones
+              {transposeKeyDisplay ? ` (${transposeKeyDisplay})` : ''}
+            </span>
+          </div>
+        )}
+
+        {appMode !== 'empty' && (
           <button type="button" onClick={clearAll}>Clear</button>
         )}
       </header>
@@ -1545,6 +1611,14 @@ export default function App() {
         <div className="error-banner">XML parse error: {diagnostics.parseError ?? 'Invalid XML'}</div>
       )}
       {renderError && <div className="error-banner">{renderError}</div>}
+      {transposeWarnings.length > 0 && (
+        <div className="warning-block">
+          <strong>Transpose warnings:</strong>
+          <ul>
+            {transposeWarnings.map((warning, index) => <li key={`transpose-warning-${index}`}>{warning}</li>)}
+          </ul>
+        </div>
+      )}
 
       {/* ── Content area ── */}
       <main className="content-grid">
@@ -1558,7 +1632,7 @@ export default function App() {
             onDrop={onDrop}
           >
             {chartDocument && (
-              <ChordChart document={chartDocument} transposeSteps={transposeSteps} />
+              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} />
             )}
           </section>
         ) : appMode === 'tablature' ? (
@@ -1649,18 +1723,6 @@ export default function App() {
                 {chartDocument.capo && <li><strong>Capo:</strong> {chartDocument.capo}</li>}
                 <li><strong>Sections:</strong> {chartDocument.sections.length}</li>
               </ul>
-
-              <h2>Transpose</h2>
-              <div className="transpose-row">
-                <button type="button" onClick={() => adjustTranspose(-1)}>−1</button>
-                <span className="transpose-value">
-                  {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose}
-                </span>
-                <button type="button" onClick={() => adjustTranspose(1)}>+1</button>
-                <button type="button" onClick={() => setTransposeSteps(0)} disabled={transposeSteps === 0}>
-                  Reset
-                </button>
-              </div>
 
               <h2>ChordPro Export</h2>
               <div className="chordpro-options-grid">
