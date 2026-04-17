@@ -1,21 +1,62 @@
+export type EnharmonicPreference = 'auto' | 'flats' | 'sharps';
+
 const STEP_TO_SEMITONE: Record<string, number> = {
   C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11,
 };
 
-const SEMITONE_TO_STEP_ALTER: Array<{ step: string; alter: number }> = [
-  { step: 'C', alter: 0 },
-  { step: 'C', alter: 1 },
-  { step: 'D', alter: 0 },
-  { step: 'D', alter: 1 },
-  { step: 'E', alter: 0 },
-  { step: 'F', alter: 0 },
-  { step: 'F', alter: 1 },
-  { step: 'G', alter: 0 },
-  { step: 'G', alter: 1 },
-  { step: 'A', alter: 0 },
-  { step: 'A', alter: 1 },
-  { step: 'B', alter: 0 },
+// C C# D D# E F F# G G# A A# B
+const SEMITONE_MAP_SHARPS: Array<{ step: string; alter: number }> = [
+  { step: 'C', alter: 0 }, { step: 'C', alter: 1 },
+  { step: 'D', alter: 0 }, { step: 'D', alter: 1 },
+  { step: 'E', alter: 0 }, { step: 'F', alter: 0 },
+  { step: 'F', alter: 1 }, { step: 'G', alter: 0 },
+  { step: 'G', alter: 1 }, { step: 'A', alter: 0 },
+  { step: 'A', alter: 1 }, { step: 'B', alter: 0 },
 ];
+
+// C Db D Eb E F Gb G Ab A Bb B
+const SEMITONE_MAP_FLATS: Array<{ step: string; alter: number }> = [
+  { step: 'C', alter: 0 },  { step: 'D', alter: -1 },
+  { step: 'D', alter: 0 },  { step: 'E', alter: -1 },
+  { step: 'E', alter: 0 },  { step: 'F', alter: 0 },
+  { step: 'G', alter: -1 }, { step: 'G', alter: 0 },
+  { step: 'A', alter: -1 }, { step: 'A', alter: 0 },
+  { step: 'B', alter: -1 }, { step: 'B', alter: 0 },
+];
+
+// Golden rule: Bb/Eb/Ab always flat; F# over Gb; Db default (C# for minor chord roots)
+const SEMITONE_MAP_AUTO: Array<{ step: string; alter: number }> = [
+  { step: 'C', alter: 0 },   // 0  C
+  { step: 'D', alter: -1 },  // 1  Db (overridden to C# for minor chord roots)
+  { step: 'D', alter: 0 },   // 2  D
+  { step: 'E', alter: -1 },  // 3  Eb
+  { step: 'E', alter: 0 },   // 4  E
+  { step: 'F', alter: 0 },   // 5  F
+  { step: 'F', alter: 1 },   // 6  F#
+  { step: 'G', alter: 0 },   // 7  G
+  { step: 'A', alter: -1 },  // 8  Ab
+  { step: 'A', alter: 0 },   // 9  A
+  { step: 'B', alter: -1 },  // 10 Bb
+  { step: 'B', alter: 0 },   // 11 B
+];
+
+function semitoneToStepAlter(
+  semitone: number,
+  pref: EnharmonicPreference,
+  isMinorContext = false,
+): { step: string; alter: number } {
+  const s = ((semitone % 12) + 12) % 12;
+  if (pref === 'sharps') return SEMITONE_MAP_SHARPS[s];
+  if (pref === 'flats') return SEMITONE_MAP_FLATS[s];
+  // auto: at semitone 1 (Db/C#), use C# for minor chord roots
+  if (s === 1 && isMinorContext) return { step: 'C', alter: 1 };
+  return SEMITONE_MAP_AUTO[s];
+}
+
+function isMinorChordKind(kindText: string): boolean {
+  const k = kindText.toLowerCase().trim();
+  return k.startsWith('minor') || k.startsWith('diminished') || k === 'half-diminished';
+}
 
 function normalizeSemitones(semitones: number): number {
   if (!Number.isFinite(semitones)) return 0;
@@ -32,10 +73,9 @@ function pitchToMidi(step: string, alter: number, octave: number): number {
   return (octave + 1) * 12 + STEP_TO_SEMITONE[step] + alter;
 }
 
-function midiToPitch(midi: number): { step: string; alter: number; octave: number } {
-  const normalizedSemitone = ((midi % 12) + 12) % 12;
+function midiToPitch(midi: number, pref: EnharmonicPreference): { step: string; alter: number; octave: number } {
   const octave = Math.floor(midi / 12) - 1;
-  const mapped = SEMITONE_TO_STEP_ALTER[normalizedSemitone];
+  const mapped = semitoneToStepAlter(midi, pref);
   return { step: mapped.step, alter: mapped.alter, octave };
 }
 
@@ -48,7 +88,7 @@ function setOrCreateChild(parent: Element, tagName: string, value: string): void
   child.textContent = value;
 }
 
-function updatePitchNode(pitchEl: Element, semitones: number, warnings: string[]): void {
+function updatePitchNode(pitchEl: Element, semitones: number, pref: EnharmonicPreference, warnings: string[]): void {
   const stepEl = pitchEl.querySelector(':scope > step');
   const octaveEl = pitchEl.querySelector(':scope > octave');
   if (!stepEl || !octaveEl) {
@@ -66,7 +106,7 @@ function updatePitchNode(pitchEl: Element, semitones: number, warnings: string[]
   const octave = parseIntOrDefault(octaveEl.textContent, 4);
 
   const midi = pitchToMidi(step, alter, octave) + semitones;
-  const next = midiToPitch(midi);
+  const next = midiToPitch(midi, pref);
 
   stepEl.textContent = next.step;
   octaveEl.textContent = String(next.octave);
@@ -77,20 +117,28 @@ function updatePitchNode(pitchEl: Element, semitones: number, warnings: string[]
   }
 }
 
-function transposeStepAlter(step: string, alter: number, semitones: number): { step: string; alter: number } {
+function transposeStepAlter(
+  step: string,
+  alter: number,
+  semitones: number,
+  pref: EnharmonicPreference,
+  isMinorContext = false,
+): { step: string; alter: number } {
   const midi = STEP_TO_SEMITONE[step] + alter + semitones;
-  const mapped = SEMITONE_TO_STEP_ALTER[((midi % 12) + 12) % 12];
-  return { step: mapped.step, alter: mapped.alter };
+  return semitoneToStepAlter(midi, pref, isMinorContext);
 }
 
-function updateHarmonyNode(harmonyEl: Element, semitones: number, warnings: string[]): void {
+function updateHarmonyNode(harmonyEl: Element, semitones: number, pref: EnharmonicPreference, warnings: string[]): void {
+  const kindEl = harmonyEl.querySelector(':scope > kind');
+  const isMinor = pref === 'auto' ? isMinorChordKind(kindEl?.textContent ?? '') : false;
+
   const rootStepEl = harmonyEl.querySelector(':scope > root > root-step');
   if (rootStepEl) {
     const rootStep = (rootStepEl.textContent ?? '').trim().toUpperCase();
     if (rootStep in STEP_TO_SEMITONE) {
       const rootAlterEl = harmonyEl.querySelector(':scope > root > root-alter');
       const rootAlter = parseIntOrDefault(rootAlterEl?.textContent, 0);
-      const mapped = transposeStepAlter(rootStep, rootAlter, semitones);
+      const mapped = transposeStepAlter(rootStep, rootAlter, semitones, pref, isMinor);
       rootStepEl.textContent = mapped.step;
       if (mapped.alter === 0) {
         rootAlterEl?.remove();
@@ -108,7 +156,7 @@ function updateHarmonyNode(harmonyEl: Element, semitones: number, warnings: stri
     if (bassStep in STEP_TO_SEMITONE) {
       const bassAlterEl = harmonyEl.querySelector(':scope > bass > bass-alter');
       const bassAlter = parseIntOrDefault(bassAlterEl?.textContent, 0);
-      const mapped = transposeStepAlter(bassStep, bassAlter, semitones);
+      const mapped = transposeStepAlter(bassStep, bassAlter, semitones, pref, false);
       bassStepEl.textContent = mapped.step;
       if (mapped.alter === 0) {
         bassAlterEl?.remove();
@@ -147,6 +195,7 @@ function updateKeyNode(keyEl: Element, semitones: number, warnings: string[]): v
 export function transposeMusicXML(
   xmlText: string,
   semitones: number,
+  enharmonicPreference: EnharmonicPreference = 'auto',
 ): { xml: string; warnings: string[] } {
   const shift = normalizeSemitones(semitones);
   if (shift === 0) return { xml: xmlText, warnings: [] };
@@ -160,10 +209,10 @@ export function transposeMusicXML(
 
   const warnings: string[] = [];
   doc.querySelectorAll('note pitch').forEach((pitchEl) => {
-    updatePitchNode(pitchEl, shift, warnings);
+    updatePitchNode(pitchEl, shift, enharmonicPreference, warnings);
   });
   doc.querySelectorAll('harmony').forEach((harmonyEl) => {
-    updateHarmonyNode(harmonyEl, shift, warnings);
+    updateHarmonyNode(harmonyEl, shift, enharmonicPreference, warnings);
   });
   doc.querySelectorAll('attributes key').forEach((keyEl) => {
     updateKeyNode(keyEl, shift, warnings);

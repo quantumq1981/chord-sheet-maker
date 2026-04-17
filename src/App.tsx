@@ -20,7 +20,7 @@ import {
 import { transposeMusicXML } from './converters/transposeMusicXML';
 import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
-import ChordChart, { transposeChord } from './renderers/ChordChart';
+import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
 import OmrImportPanel from './components/OmrImportPanel';
 import {
@@ -347,7 +347,7 @@ function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics:
 const FIFTHS_MAJOR_KEYS = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#'] as const;
 const FIFTHS_MINOR_KEYS = ['Abm', 'Ebm', 'Bbm', 'Fm', 'Cm', 'Gm', 'Dm', 'Am', 'Em', 'Bm', 'F#m', 'C#m', 'G#m', 'D#m', 'A#m'] as const;
 
-function transposeKeyDisplayFromXml(xmlText: string, semitones: number): string | null {
+function transposeKeyDisplayFromXml(xmlText: string, semitones: number, pref: EnharmonicPreference = 'auto'): string | null {
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlText, 'application/xml');
   const keyEl = doc.querySelector('attributes > key');
@@ -358,7 +358,7 @@ function transposeKeyDisplayFromXml(xmlText: string, semitones: number): string 
   const keyTable = mode === 'minor' ? FIFTHS_MINOR_KEYS : FIFTHS_MAJOR_KEYS;
   const starting = keyTable[fifths + 7];
   if (!starting) return null;
-  return transposeChord(starting, semitones);
+  return transposeChord(starting, semitones, pref);
 }
 
 function buildChordProOptionsFromUI(uiState: ChordProUiState) {
@@ -398,7 +398,7 @@ function deriveProFilename(loadedFilename: string): string {
 }
 
 /** Serialize a ChordChartDocument back to canonical ChordPro text. */
-function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: number, uiState: ChordProUiState): { text: string; warnings: string[] } {
+function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: number, uiState: ChordProUiState, enharmonicPref: EnharmonicPreference = 'auto'): { text: string; warnings: string[] } {
   const lines: string[] = [];
   const warnings: string[] = [];
 
@@ -406,7 +406,7 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
   if (doc.artist)   lines.push(`{artist: ${doc.artist}}`);
   if (doc.subtitle) lines.push(`{subtitle: ${doc.subtitle}}`);
   if (doc.key) {
-    const displayKey = transposeSteps !== 0 ? transposeChord(doc.key, transposeSteps) : doc.key;
+    const displayKey = transposeSteps !== 0 ? transposeChord(doc.key, transposeSteps, enharmonicPref) : doc.key;
     lines.push(`{key: ${displayKey}}`);
   }
   if (doc.capo)  lines.push(`{capo: ${doc.capo}}`);
@@ -439,7 +439,7 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
       if (isGridOnly) {
         const chords = line.tokens
           .filter((token) => token.kind === 'chord')
-          .map((token) => (transposeSteps !== 0 ? transposeChord(token.text, transposeSteps) : token.text));
+          .map((token) => (transposeSteps !== 0 ? transposeChord(token.text, transposeSteps, enharmonicPref) : token.text));
         if (chords.length === 0) continue;
         const chunked: string[] = [];
         for (let i = 0; i < chords.length; i += uiState.barsPerLine) {
@@ -453,7 +453,7 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
       for (let index = 0; index < line.tokens.length; index += 1) {
         const token = line.tokens[index];
         if (token.kind === 'chord') {
-          const displayed = transposeSteps !== 0 ? transposeChord(token.text, transposeSteps) : token.text;
+          const displayed = transposeSteps !== 0 ? transposeChord(token.text, transposeSteps, enharmonicPref) : token.text;
           const nextToken = line.tokens[index + 1];
           if (isCombinedBracket && nextToken?.kind === 'lyric') {
             parts.push(`[${displayed} ${nextToken.text}]`);
@@ -526,7 +526,7 @@ function isChordGridText(text: string): boolean {
  * - Preserve |: and :| repeat markers
  * - Remove lone | bar separators (replaced by spaces)
  */
-function lyricTextToCsmpnLine(text: string, transposeSteps: number): string {
+function lyricTextToCsmpnLine(text: string, transposeSteps: number, enharmonicPref: EnharmonicPreference = 'auto'): string {
   const RSTART = '\x00RS\x00';
   const REND = '\x00RE\x00';
   return text
@@ -541,7 +541,7 @@ function lyricTextToCsmpnLine(text: string, transposeSteps: number): string {
       if (t === '|:' || t === ':|' || t === '%' || /^x\d+$/.test(t)) return t;
       // Attempt transposition; if it fails (non-chord token) return as-is
       if (transposeSteps !== 0) {
-        try { return transposeChord(t, transposeSteps); } catch { return t; }
+        try { return transposeChord(t, transposeSteps, enharmonicPref); } catch { return t; }
       }
       return t;
     })
@@ -552,13 +552,14 @@ function buildCsmpnFromChartDocument(
   doc: ChordChartDocument,
   transposeSteps: number,
   fallbackTitle: string,
+  enharmonicPref: EnharmonicPreference = 'auto',
 ): string {
   const title = doc.title || fallbackTitle || 'Untitled';
   const style = doc.subtitle || 'Fake Book';
   const tempo = doc.tempo || '';
   const time = doc.time || '';
   const rawKey = doc.key ?? '';
-  const key = rawKey && transposeSteps !== 0 ? transposeChord(rawKey, transposeSteps) : rawKey;
+  const key = rawKey && transposeSteps !== 0 ? transposeChord(rawKey, transposeSteps, enharmonicPref) : rawKey;
 
   const out: string[] = [
     `Title: ${title}`,
@@ -581,7 +582,7 @@ function buildCsmpnFromChartDocument(
       const chordTokens = line.tokens.filter((t) => t.kind === 'chord');
       if (chordTokens.length > 0) {
         const chords = chordTokens.map((t) =>
-          transposeSteps !== 0 ? transposeChord(t.text, transposeSteps) : t.text,
+          transposeSteps !== 0 ? transposeChord(t.text, transposeSteps, enharmonicPref) : t.text,
         );
         out.push(chords.join(' '));
         continue;
@@ -593,7 +594,7 @@ function buildCsmpnFromChartDocument(
       if (allLyric) {
         const text = line.tokens.map((t) => t.text).join('');
         if (isChordGridText(text)) {
-          out.push(lyricTextToCsmpnLine(text, transposeSteps));
+          out.push(lyricTextToCsmpnLine(text, transposeSteps, enharmonicPref));
         }
       }
     }
@@ -694,6 +695,7 @@ export default function App() {
   // ── Chord-chart mode state ──
   const [chartDocument, setChartDocument] = useState<ChordChartDocument | null>(null);
   const [transposeSemitones, setTransposeSemitones] = useState(0);
+  const [transposeEnharmonic, setTransposeEnharmonic] = useState<EnharmonicPreference>('auto');
   const [transposeWarnings, setTransposeWarnings] = useState<string[]>([]);
   const [detectedFormatLabel, setDetectedFormatLabel] = useState('');
   const [chartChordProText, setChartChordProText] = useState('');
@@ -740,10 +742,10 @@ export default function App() {
 
   useEffect(() => {
     if (!pristineXmlText) return;
-    const { xml, warnings } = transposeMusicXML(pristineXmlText, transposeSemitones);
+    const { xml, warnings } = transposeMusicXML(pristineXmlText, transposeSemitones, transposeEnharmonic);
     setLoadedXmlText(xml);
     setTransposeWarnings(warnings);
-  }, [pristineXmlText, transposeSemitones]);
+  }, [pristineXmlText, transposeSemitones, transposeEnharmonic]);
 
   // ── OSMD initialisation ──
   useEffect(() => {
@@ -995,7 +997,7 @@ export default function App() {
         setChartDocument(doc);
         setDetectedFormatLabel(formatLabels[sourceFormat] ?? sourceFormat);
         setTransposeWarnings([]);
-        const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi);
+        const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi, transposeEnharmonic);
         setChartChordProText(chartExport.text);
         setChartChordProWarnings(chartExport.warnings);
         setRenderError('');
@@ -1474,19 +1476,19 @@ export default function App() {
 
   const chartExportPreview = useMemo(() => {
     if (!chartDocument) return { text: '', warnings: [] as string[] };
-    return serializeChordProFromDocument(chartDocument, transposeSemitones, chordProUi);
-  }, [chartDocument, transposeSemitones, chordProUi]);
+    return serializeChordProFromDocument(chartDocument, transposeSemitones, chordProUi, transposeEnharmonic);
+  }, [chartDocument, transposeSemitones, chordProUi, transposeEnharmonic]);
 
   const generateChartCsmpn = useCallback(() => {
     if (!chartDocument) {
       showExportError('Load a chord chart file before generating CSMPN Fake Book.');
       return;
     }
-    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, getBaseFilename(loadedFilename));
+    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, getBaseFilename(loadedFilename), transposeEnharmonic);
     setCsmpnFakeBookText(csmpn);
     setCsmpnWarnings([]);
     showExportSuccess('CSMPN Fake Book generated.');
-  }, [chartDocument, transposeSemitones, loadedFilename, showExportError, showExportSuccess]);
+  }, [chartDocument, transposeSemitones, transposeEnharmonic, loadedFilename, showExportError, showExportSuccess]);
 
   const generateChartChordPro = useCallback(() => {
     if (!chartDocument) {
@@ -1495,11 +1497,11 @@ export default function App() {
     }
     setChartChordProText(chartExportPreview.text);
     setChartChordProWarnings(chartExportPreview.warnings);
-    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, getBaseFilename(loadedFilename));
+    const csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, getBaseFilename(loadedFilename), transposeEnharmonic);
     setCsmpnFakeBookText(csmpn);
     setCsmpnWarnings([]);
     showExportSuccess('ChordPro generated.');
-  }, [chartDocument, chartExportPreview, transposeSemitones, loadedFilename, showExportError, showExportSuccess]);
+  }, [chartDocument, chartExportPreview, transposeSemitones, transposeEnharmonic, loadedFilename, showExportError, showExportSuccess]);
 
   useEffect(() => {
     if (!chartDocument) return;
@@ -1523,10 +1525,10 @@ export default function App() {
   }, [adjustTranspose]);
 
   const transposeKeyDisplay = useMemo(() => {
-    if (appMode === 'chord-chart') return chartDocument?.key ? transposeChord(chartDocument.key, transposeSemitones) : null;
+    if (appMode === 'chord-chart') return chartDocument?.key ? transposeChord(chartDocument.key, transposeSemitones, transposeEnharmonic) : null;
     if (!pristineXmlText) return null;
-    return transposeKeyDisplayFromXml(pristineXmlText, transposeSemitones);
-  }, [appMode, chartDocument?.key, pristineXmlText, transposeSemitones]);
+    return transposeKeyDisplayFromXml(pristineXmlText, transposeSemitones, transposeEnharmonic);
+  }, [appMode, chartDocument?.key, pristineXmlText, transposeSemitones, transposeEnharmonic]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1594,6 +1596,16 @@ export default function App() {
             <button type="button" onClick={() => setTransposeSemitones(0)} disabled={transposeSemitones === 0}>
               Reset
             </button>
+            <select
+              className="transpose-enharmonic"
+              value={transposeEnharmonic}
+              onChange={(e) => setTransposeEnharmonic(e.target.value as EnharmonicPreference)}
+              aria-label="Enharmonic spelling"
+            >
+              <option value="auto">Auto (♭/♯)</option>
+              <option value="flats">Flats (♭)</option>
+              <option value="sharps">Sharps (♯)</option>
+            </select>
             <span className="transpose-meta">
               {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose} semitones
               {transposeKeyDisplay ? ` (${transposeKeyDisplay})` : ''}
@@ -1632,7 +1644,7 @@ export default function App() {
             onDrop={onDrop}
           >
             {chartDocument && (
-              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} />
+              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} enharmonicPreference={transposeEnharmonic} />
             )}
           </section>
         ) : appMode === 'tablature' ? (
