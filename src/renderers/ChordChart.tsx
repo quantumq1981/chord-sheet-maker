@@ -32,26 +32,41 @@ import type {
 
 // ─── Transpose helpers ────────────────────────────────────────────────────────
 
-const CHROMATIC = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
+export type EnharmonicPreference = 'auto' | 'flats' | 'sharps';
 
-/** Normalise flat enharmonics to their sharp equivalents for lookup. */
+// All-sharps scale used as the canonical semitone index
+const CHROMATIC_SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
+const CHROMATIC_FLATS  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
+// Golden rule: Bb/Eb/Ab always flat; F# over Gb; Db default (C# for minor roots)
+const CHROMATIC_AUTO   = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
+
+/** Normalise flat enharmonics to their sharp equivalents for index lookup. */
 const ENHARMONIC: Record<string, string> = {
   Db: 'C#', Eb: 'D#', Fb: 'E', Gb: 'F#', Ab: 'G#', Bb: 'A#', Cb: 'B',
 };
 
-function transposeRoot(root: string, steps: number): string {
+function semitoneToName(semitone: number, pref: EnharmonicPreference, isMinor = false): string {
+  const s = ((semitone % 12) + 12) % 12;
+  if (pref === 'sharps') return CHROMATIC_SHARPS[s];
+  if (pref === 'flats')  return CHROMATIC_FLATS[s];
+  // auto: at semitone 1 (Db/C#), use C# for minor chord roots
+  if (s === 1 && isMinor) return 'C#';
+  return CHROMATIC_AUTO[s];
+}
+
+function transposeRoot(root: string, steps: number, pref: EnharmonicPreference, isMinor = false): string {
   if (steps === 0) return root;
   const normalized = ENHARMONIC[root] ?? root;
-  const idx = CHROMATIC.indexOf(normalized as (typeof CHROMATIC)[number]);
+  const idx = CHROMATIC_SHARPS.indexOf(normalized as (typeof CHROMATIC_SHARPS)[number]);
   if (idx === -1) return root;
-  return CHROMATIC[((idx + steps) % 12 + 12) % 12];
+  return semitoneToName(idx + steps, pref, isMinor);
 }
 
 /**
  * Transpose a chord name by `steps` semitones.
  * Handles slash chords (Am/G) by transposing both root and bass separately.
  */
-export function transposeChord(chord: string, steps: number): string {
+export function transposeChord(chord: string, steps: number, pref: EnharmonicPreference = 'auto'): string {
   if (steps === 0) return chord;
 
   // Split on the last "/" that looks like a bass note separator
@@ -59,13 +74,14 @@ export function transposeChord(chord: string, steps: number): string {
   if (slashIdx > 0) {
     const upper = chord.slice(0, slashIdx);
     const bass = chord.slice(slashIdx + 1);
-    return `${transposeChord(upper, steps)}/${transposeChord(bass, steps)}`;
+    return `${transposeChord(upper, steps, pref)}/${transposeChord(bass, steps, pref)}`;
   }
 
   const match = chord.match(/^([A-G][#b]?)(.*)$/);
   if (!match) return chord;
   const [, root, rest] = match;
-  return `${transposeRoot(root, steps)}${rest}`;
+  const isMinor = /^m(?!a)/i.test(rest) || /^dim/i.test(rest);
+  return `${transposeRoot(root, steps, pref, isMinor)}${rest}`;
 }
 
 // ─── Line-level rendering helpers ─────────────────────────────────────────────
@@ -101,16 +117,17 @@ function tokensToPairs(tokens: ChartToken[]): Pair[] {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ChordSpan({ text, steps }: { text: string; steps: number }) {
-  return <span className="cc-chord">{transposeChord(text, steps)}</span>;
+function ChordSpan({ text, steps, pref }: { text: string; steps: number; pref: EnharmonicPreference }) {
+  return <span className="cc-chord">{transposeChord(text, steps, pref)}</span>;
 }
 
 interface LineProps {
   line: ChartLine;
   steps: number;
+  pref: EnharmonicPreference;
 }
 
-function LineRow({ line, steps }: LineProps) {
+function LineRow({ line, steps, pref }: LineProps) {
   const { tokens } = line;
   if (tokens.length === 0) return null;
 
@@ -128,7 +145,7 @@ function LineRow({ line, steps }: LineProps) {
       <div className="cc-line cc-chords-only">
         {tokens.filter((t) => t.kind === 'chord').map((t, i) => (
           <span key={i} className="cc-chords-only__cell">
-            <ChordSpan text={t.text} steps={steps} />
+            <ChordSpan text={t.text} steps={steps} pref={pref} />
           </span>
         ))}
       </div>
@@ -153,7 +170,7 @@ function LineRow({ line, steps }: LineProps) {
       {pairs.map((pair, i) => (
         <span key={i} className="cc-pair">
           <span className="cc-pair__chord">
-            {pair.chord ? <ChordSpan text={pair.chord} steps={steps} /> : '\u00A0'}
+            {pair.chord ? <ChordSpan text={pair.chord} steps={steps} pref={pref} /> : '\u00A0'}
           </span>
           <span className="cc-pair__lyric">{pair.lyric ?? ''}</span>
         </span>
@@ -162,13 +179,13 @@ function LineRow({ line, steps }: LineProps) {
   );
 }
 
-function SectionBlock({ section, steps }: { section: ChartSection; steps: number }) {
+function SectionBlock({ section, steps, pref }: { section: ChartSection; steps: number; pref: EnharmonicPreference }) {
   const label = section.label ?? (section.type !== 'unknown' ? section.type : undefined);
   return (
     <div className="cc-section">
       {label && <div className="cc-section-label">{label}</div>}
       {section.lines.map((line, i) => (
-        <LineRow key={i} line={line} steps={steps} />
+        <LineRow key={i} line={line} steps={steps} pref={pref} />
       ))}
     </div>
   );
@@ -180,11 +197,13 @@ export interface ChordChartProps {
   document: ChordChartDocument;
   /** Semitones to shift every chord (positive = up, negative = down). */
   transposeSteps?: number;
+  /** Whether to spell transposed accidentals as sharps, flats, or auto (golden rule). */
+  enharmonicPreference?: EnharmonicPreference;
 }
 
-export default function ChordChart({ document: doc, transposeSteps = 0 }: ChordChartProps) {
+export default function ChordChart({ document: doc, transposeSteps = 0, enharmonicPreference = 'auto' }: ChordChartProps) {
   const displayKey =
-    doc.key ? transposeChord(doc.key, transposeSteps) : undefined;
+    doc.key ? transposeChord(doc.key, transposeSteps, enharmonicPreference) : undefined;
 
   return (
     <div className="chord-chart">
@@ -209,7 +228,7 @@ export default function ChordChart({ document: doc, transposeSteps = 0 }: ChordC
       )}
 
       {doc.sections.map((section, i) => (
-        <SectionBlock key={i} section={section} steps={transposeSteps} />
+        <SectionBlock key={i} section={section} steps={transposeSteps} pref={enharmonicPreference} />
       ))}
     </div>
   );
