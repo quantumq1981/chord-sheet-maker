@@ -754,6 +754,12 @@ export default function App() {
       autoResize: true,
       drawingParameters: 'default',
     });
+    // Prevent rehearsal marks (boxed section labels) from overlapping chord symbols.
+    // By default both land at almost the same Y above the staff; pushing the rehearsal
+    // mark higher (more-negative Y) and adding padding below it gives clear separation.
+    const rules = osmdRef.current.EngravingRules;
+    rules.RehearsalMarkYOffset = 4.5;   // moves mark higher above the staff
+    rules.ChordSymbolYPadding = 0.5;    // adds clearance between chord text and sky-line
     return () => { osmdRef.current = null; };
   }, []);
 
