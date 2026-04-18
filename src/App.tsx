@@ -22,6 +22,10 @@ import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
+import {
+  extractRehearsalMarkTexts,
+  repositionRehearsalMarksBetweenSystems,
+} from './utils/rehearsalMarkLayout';
 import OmrImportPanel from './components/OmrImportPanel';
 import {
   createOmrJob,
@@ -754,12 +758,6 @@ export default function App() {
       autoResize: true,
       drawingParameters: 'default',
     });
-    // Prevent rehearsal marks (boxed section labels) from overlapping chord symbols.
-    // By default both land at almost the same Y above the staff; pushing the rehearsal
-    // mark higher (more-negative Y) and adding padding below it gives clear separation.
-    const rules = osmdRef.current.EngravingRules;
-    rules.RehearsalMarkYOffset = 4.5;   // moves mark higher above the staff
-    rules.ChordSymbolYPadding = 0.5;    // adds clearance between chord text and sky-line
     return () => { osmdRef.current = null; };
   }, []);
 
@@ -782,6 +780,12 @@ export default function App() {
         }
         osmd.Zoom = zoom;
         osmd.render();
+        // Move rehearsal-mark boxes (section labels) into the vertical gap between
+        // the preceding system and the system they head, centred in that whitespace.
+        if (containerRef.current) {
+          const rehearsalTexts = extractRehearsalMarkTexts(loadedXmlText);
+          repositionRehearsalMarksBetweenSystems(containerRef.current, osmd, rehearsalTexts);
+        }
         setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
         if (!didAutoFitRef.current) {
           didAutoFitRef.current = true;
