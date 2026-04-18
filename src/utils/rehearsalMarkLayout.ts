@@ -23,8 +23,8 @@ export function extractRehearsalMarkTexts(xmlText: string): Set<string> {
 interface SystemBand { top: number; bottom: number }
 
 /**
- * Read the OSMD graphical model to get the SVG-pixel Y range of each rendered
- * system (row of staves).  OSMD uses 10 SVG pixels per internal "music unit".
+ * Read the OSMD graphical model to get the SVG-coordinate Y range of each
+ * rendered system.  OSMD uses 10 SVG units per internal "music unit".
  */
 function getSystemBands(osmd: OpenSheetMusicDisplay): SystemBand[] {
   const unitInPx = 10;
@@ -49,14 +49,16 @@ function getSystemBands(osmd: OpenSheetMusicDisplay): SystemBand[] {
 }
 
 /**
- * After osmd.render(), translate every rehearsal-mark group in the SVG so it
- * sits vertically centred in the whitespace between the preceding system and
- * the system it heads.
+ * After osmd.render(), translate every rehearsal-mark box+text in the SVG so
+ * it sits vertically centred in the whitespace between the preceding system
+ * and the system it heads.
  *
- * Detection strategy: a rehearsal mark in OSMD/VexFlow SVG is a <g> that
- * has a direct-child <rect> (the outline box) and a direct-child <text>.
- * We match candidates by checking that the <text> content is a known
- * rehearsal-mark string (extracted from the MusicXML before loading).
+ * Detection strategy: VexFlow (OSMD's renderer) draws a StaveSection as three
+ * consecutive siblings in the SVG: <rect> (the outline box), <path d=""> (an
+ * empty stroke artefact), then <text> (the label).  We find the <text> by
+ * exact content match, then search backward through siblings for the <rect>.
+ * Both elements are moved by the same dy (modifying their "y" attributes
+ * directly rather than adding a transform, which avoids nesting issues).
  */
 export function repositionRehearsalMarksBetweenSystems(
   container: HTMLElement,
@@ -71,31 +73,20 @@ export function repositionRehearsalMarksBetweenSystems(
   const bands = getSystemBands(osmd);
   if (bands.length < 2) return;
 
-  // Walk every <text> element in the SVG; if its content matches a known
-  // rehearsal mark, walk up to find the enclosing <g> that owns the box <rect>.
   svg.querySelectorAll<SVGTextElement>('text').forEach((textEl) => {
     const label = textEl.textContent?.trim() ?? '';
     if (!rehearsalTexts.has(label)) return;
 
-    // Find the nearest <g> ancestor that has a direct <rect> child
-    let groupEl: Element | null = textEl.parentElement;
-    while (groupEl && groupEl !== svg) {
-      if (
-        groupEl.tagName === 'g' &&
-        Array.from(groupEl.children).some((c) => c.tagName === 'rect')
-      ) break;
-      groupEl = groupEl.parentElement;
-    }
-    if (!groupEl || groupEl === svg) return;
-
-    const gEl = groupEl as SVGGraphicsElement;
+    // getBBox() returns coordinates in the SVG's internal coordinate system
+    // (viewBox space), which matches OSMD's GraphicSheet positions × 10.
     let bbox: DOMRect;
-    try { bbox = gEl.getBBox(); } catch { return; }
+    try { bbox = textEl.getBBox(); } catch { return; }
 
     const centerY = bbox.y + bbox.height / 2;
 
-    // Find which system band this mark currently sits inside (with generous
-    // tolerance for marks that OSMD placed slightly above the top staff line).
+    // Which system does this mark currently sit inside?
+    // Generous upward tolerance (-60) because OSMD places rehearsal marks
+    // above the top staff line, which may be slightly above BorderTop.
     const idx = bands.findIndex(
       (b) => centerY >= b.top - 60 && centerY <= b.bottom + 10,
     );
@@ -110,19 +101,24 @@ export function repositionRehearsalMarksBetweenSystems(
     const targetCenterY = gapTop + gap / 2;
     const dy = targetCenterY - centerY;
 
-    // Merge with any existing transform on the group.
-    const existing = gEl.getAttribute('transform') ?? '';
-    const tMatch = existing.match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)/);
-    if (tMatch) {
-      const tx = parseFloat(tMatch[1]);
-      const ty = parseFloat(tMatch[2]) + dy;
-      gEl.setAttribute(
-        'transform',
-        existing.replace(/translate\([^)]*\)/, `translate(${tx},${ty})`),
-      );
-    } else {
-      const prefix = existing.trim() ? `${existing.trim()} ` : '';
-      gEl.setAttribute('transform', `${prefix}translate(0,${dy})`);
+    // Move the <text> element by adjusting its y attribute.
+    const textY = parseFloat(textEl.getAttribute('y') ?? '0');
+    textEl.setAttribute('y', String(textY + dy));
+
+    // Find the associated <rect> (the rehearsal box outline) by walking
+    // backward through siblings.  VexFlow StaveSection renders:
+    //   <rect>  ← box outline
+    //   <path d="">  ← empty artefact from ctx.stroke() after ctx.beginPath()
+    //   <text>  ← label (the element we already found above)
+    // so the <rect> is typically 2 siblings before <text>.
+    let sibling: Element | null = textEl.previousElementSibling;
+    for (let i = 0; i < 4 && sibling; i++) {
+      if (sibling.tagName === 'rect') {
+        const rectY = parseFloat(sibling.getAttribute('y') ?? '0');
+        sibling.setAttribute('y', String(rectY + dy));
+        break;
+      }
+      sibling = sibling.previousElementSibling;
     }
   });
 }
