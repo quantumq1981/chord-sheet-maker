@@ -1,6 +1,6 @@
 # CLAUDE.md — chord-sheet-maker
 
-Last updated: 2026-04-17
+Last updated: 2026-04-18
 
 ## Project Role
 
@@ -56,7 +56,8 @@ src/
 ├── types/
 │   └── omr.ts
 └── utils/
-    └── loadMusicXmlFromString.ts
+    ├── loadMusicXmlFromString.ts
+    └── rehearsalMarkLayout.ts   Rehearsal-mark SVG post-processing (extract labels, reposition between systems)
 
 backend/
 ├── app/
@@ -94,7 +95,24 @@ The app has four top-level states (`AppMode`):
 
 1. `sniffFormat` → `parseChordChart` → `ChordChartDocument`
 2. `ChordChart` React component renders token pairs (chord + lyric)
-3. Transpose applied in-place via `transposeChord()`
+3. Transpose applied in-place via `transposeChord()` with `EnharmonicPreference`
+
+### Post-render: rehearsal mark repositioning
+
+After every `osmd.render()`, `repositionRehearsalMarksBetweenSystems()` runs:
+
+1. `extractRehearsalMarkTexts(xmlText)` parses the MusicXML to collect all `<rehearsal>` label strings
+2. For each matching `<text>` element in the SVG, `getBBox()` gives its current Y center
+3. `getSystemBands(osmd)` reads `osmd.GraphicSheet.MusicPages[].MusicSystems[].PositionAndShape` (×10 to convert OSMD units → SVG coordinate space) to get the top/bottom pixel extent of each rendered system
+4. The mark's Y center is matched to a system band; if it belongs to system N (N>0), its target is the vertical center of the gap between system N−1 bottom and system N top
+5. `dy` is applied by directly modifying the `y` attribute on the `<text>` element and searching backward through siblings (up to 4 steps) for the associated `<rect>` (the box outline)
+
+**Critical implementation detail — OSMD/VexFlow SVG structure**: OSMD uses its own bundled VexFlow 1.2.93 (not the top-level `node_modules/vexflow` v5.0). VexFlow 1.2.93's `StaveSection.draw()` emits three flat sibling elements with no wrapper `<g>`:
+- `<rect>` — the box outline (from `ctx.rect()`)
+- `<path d="">` — empty artefact from `ctx.stroke()` after `ctx.beginPath()` with no path commands
+- `<text>` — the label (from `ctx.fillText()`)
+
+Do **not** try to find a `<g>` ancestor wrapping the rehearsal mark — none exists at that granularity. Walking up to find any `<g>` with a `<rect>` child will match a large system/measure container and incorrectly transform all its contents.
 
 ---
 
@@ -155,6 +173,29 @@ lowest valid fret (0–22) not already occupied by another note in the chord gro
 - All OSMD SVG pages converted to canvases (2× scale) via `stitchCanvases()`
 - Canvases stacked vertically into one composite canvas
 - Downloaded as single `.png` file (iOS: opens in new tab)
+
+---
+
+## Transpose & Enharmonic Preference
+
+All transpose paths share `EnharmonicPreference = 'auto' | 'flats' | 'sharps'`, controlled by a `<select>` in the transpose bar UI.
+
+### Golden-rule auto mode
+- Bb, Eb, Ab → always flat
+- F# preferred over Gb
+- At semitone 1 (the Db/C# toss-up): Db for major chord roots, C# for minor/diminished roots
+
+### Files
+| File | Role |
+|---|---|
+| `src/converters/transposeMusicXML.ts` | Transposes MusicXML pitch nodes, key signatures, harmony roots/bass. Three lookup tables: `SEMITONE_MAP_SHARPS`, `SEMITONE_MAP_FLATS`, `SEMITONE_MAP_AUTO`. Reads `<kind>` to determine minor context for auto mode. |
+| `src/renderers/ChordChart.tsx` | Exports `transposeChord(chord, steps, pref)` and `EnharmonicPreference`. Detects minor context from chord suffix regex `/^m(?!a)/i` or `/^dim/i`. |
+| `src/App.tsx` | `transposeEnharmonic` state wired to select; passed to both `transposeMusicXML` and `transposeChord`. |
+
+### State (`App.tsx`)
+```
+transposeEnharmonic: EnharmonicPreference  — 'auto' | 'flats' | 'sharps', default 'auto'
+```
 
 ---
 
@@ -258,6 +299,7 @@ Chart state:
 
 Global transpose:
   transposeSemitones              — shared by notation + chord-chart render/export paths
+  transposeEnharmonic             — 'auto' | 'flats' | 'sharps'; controls accidental spelling
   pristineXmlText                 — unmodified MusicXML source used as transpose base
   loadedXmlText                   — current transposed MusicXML fed to OSMD/export/tab converters
 
@@ -305,6 +347,7 @@ Test files live in `src/**/__tests__/`:
 | `realFileRegression.test.ts` | Real MusicXML files (Confirmation.xml, etc.) |
 | `xmlIntakeAnalyzer.test.ts` | Complexity analysis |
 | `chordSymbolParser.test.ts` | Chord symbol inference |
+| `transposeMusicXML.test.ts` | MusicXML transposition: pitch nodes, key signatures, harmony roots/bass, all three enharmonic modes, auto minor/major context |
 
 ---
 
@@ -340,7 +383,7 @@ Test files live in `src/**/__tests__/`:
 
 ---
 
-## Known Issues / Limitations (as of 2026-04-17)
+## Known Issues / Limitations (as of 2026-04-18)
 
 | Issue | Status |
 |---|---|
@@ -353,3 +396,7 @@ Test files live in `src/**/__tests__/`:
 | No repeat expansion in ChordPro | MVP — future work |
 | Timewise MusicXML requires in-memory conversion | Logged in diagnostics |
 | OMR requires optional backend (not on GitHub Pages) | By design |
+| Enharmonic preference UI added to transpose bar | Added 2026-04-18 |
+| Rehearsal marks overlapping chord symbols | Fixed 2026-04-18 (SVG post-processing) |
+| Rehearsal mark repositioning not applied on PDF/print export re-render | Known limitation — only display render is post-processed |
+| First-system rehearsal marks not repositioned (no gap above) | By design — only inter-system gaps are centred |
