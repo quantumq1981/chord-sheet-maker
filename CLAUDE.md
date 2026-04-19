@@ -1,6 +1,6 @@
 # CLAUDE.md — chord-sheet-maker
 
-Last updated: 2026-04-18
+Last updated: 2026-04-19
 
 ## Project Role
 
@@ -99,7 +99,7 @@ The app has four top-level states (`AppMode`):
 
 ### Post-render: rehearsal mark repositioning
 
-After every `osmd.render()`, `repositionRehearsalMarksBetweenSystems()` runs:
+After every `osmd.render()` — including display renders, export renders, and restore renders — `repositionRehearsalMarksBetweenSystems()` runs:
 
 1. `extractRehearsalMarkTexts(xmlText)` parses the MusicXML to collect all `<rehearsal>` label strings
 2. For each matching `<text>` element in the SVG, `getBBox()` gives its current Y center
@@ -398,5 +398,5 @@ Test files live in `src/**/__tests__/`:
 | OMR requires optional backend (not on GitHub Pages) | By design |
 | Enharmonic preference UI added to transpose bar | Added 2026-04-18 |
 | Rehearsal marks overlapping chord symbols | Fixed 2026-04-18 (SVG post-processing) |
-| Rehearsal mark repositioning not applied on PDF/print export re-render | Known limitation — only display render is post-processed |
+| Rehearsal mark repositioning not applied on PDF/print export re-render | Fixed 2026-04-19 — repositioning now applied after every export/print render and after restore render |
 | First-system rehearsal marks not repositioned (no gap above) | By design — only inter-system gaps are centred |

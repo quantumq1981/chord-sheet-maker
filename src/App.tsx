@@ -1314,6 +1314,13 @@ export default function App() {
       applyPrintProfile(osmd, pdfPageSize);
       osmd.Zoom = PRINT_ZOOM;
       osmd.render();
+      if (containerRef.current) {
+        try {
+          repositionRehearsalMarksBetweenSystems(
+            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+          );
+        } catch { /* don't block export */ }
+      }
       const svgs = getRenderedSvgs(containerRef.current);
       if (svgs.length === 0) throw new Error('No rendered score found after applying print layout.');
       const pdf = new jsPDF({ orientation: 'portrait', unit, format });
@@ -1347,8 +1354,15 @@ export default function App() {
       restoreDisplayMode(osmd);
       osmd.Zoom = zoomSnapshot;
       osmd.render();
+      if (containerRef.current) {
+        try {
+          repositionRehearsalMarksBetweenSystems(
+            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+          );
+        } catch { /* ignore */ }
+      }
     }
-  }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
+  }, [baseName, loadedXmlText, pdfPageSize, showExportError, showExportSuccess]);
 
   const printScore = useCallback(() => {
     const osmd = osmdRef.current;
@@ -1362,11 +1376,25 @@ export default function App() {
       restoreDisplayMode(osmd);
       osmd.Zoom = zoomSnapshot;
       osmd.render();
+      if (containerRef.current) {
+        try {
+          repositionRehearsalMarksBetweenSystems(
+            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+          );
+        } catch { /* ignore */ }
+      }
     };
     try {
       applyPrintProfile(osmd, pdfPageSize);
       osmd.Zoom = PRINT_ZOOM;
       osmd.render();
+      if (containerRef.current) {
+        try {
+          repositionRehearsalMarksBetweenSystems(
+            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+          );
+        } catch { /* don't block print */ }
+      }
       window.addEventListener('afterprint', restoreAfterPrint, { once: true });
       window.print();
       setTimeout(restoreAfterPrint, 1000);
@@ -1374,7 +1402,7 @@ export default function App() {
       restoreAfterPrint();
       showExportError(`Print failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [pdfPageSize, renderedPageCount, showExportError]);
+  }, [loadedXmlText, pdfPageSize, renderedPageCount, showExportError]);
 
   // ── MusicXML → ChordPro ──
   const generateChordPro = useCallback(async () => {
