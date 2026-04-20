@@ -14,6 +14,7 @@ This repo is the **MusicXML normalizer / converter workbench**. It ingests struc
 |---|---|
 | Framework | React 18 + Vite + TypeScript 5.6 |
 | Score rendering | OpenSheetMusicDisplay (OSMD) v1.8.9 |
+| Alternate notation/tab rendering | AlphaTab (`@coderline/alphatab`) |
 | Tab rendering | VexFlow v5.0 |
 | PDF export | jsPDF v2.5.2 |
 | ZIP handling | JSZip v3.10.1 |
@@ -33,7 +34,8 @@ src/
 │   └── ChordChartModel.ts       Token/Line/Section/Document data types
 ├── renderers/
 │   ├── ChordChart.tsx           React component for chord chart display + transpose
-│   └── VexFlowTabRenderer.tsx   Guitar tab renderer using VexFlow v5 SVG backend
+│   ├── VexFlowTabRenderer.tsx   Guitar tab renderer using VexFlow v5 SVG backend
+│   └── AlphaTabRenderer.tsx     AlphaTab renderer for notation + tablature
 ├── converters/
 │   ├── musicXMLtochordpro.ts    Core MusicXML→ChordPro engine (~1000 lines)
 │   ├── musicXMLtoVexFlow.ts     MusicXML→VexFlow tab data converter
@@ -52,9 +54,11 @@ src/
 │   ├── OmrImportPanel.tsx
 │   ├── OmrStatusCard.tsx
 │   ├── OmrSummaryPanel.tsx
-│   └── OmrLogsPanel.tsx
+│   ├── OmrLogsPanel.tsx
+│   └── AlphaTabControls.tsx
 ├── types/
-│   └── omr.ts
+│   ├── omr.ts
+│   └── alphatab.ts
 └── utils/
     ├── loadMusicXmlFromString.ts
     └── rehearsalMarkLayout.ts   Rehearsal-mark SVG post-processing (extract labels, reposition between systems)
@@ -77,6 +81,7 @@ The app has four top-level states (`AppMode`):
 - **`notation`** — MusicXML/MXL loaded, OSMD renders the score in SVG; full export panel available
 - **`chord-chart`** — text chord chart loaded (ChordPro/UG/COW); ChordChart component renders
 - **`tablature`** — MusicXML/MXL loaded, VexFlow renders guitar tab; accessible via "Tab View" button from notation mode
+- **`alphatab`** — MusicXML/MXL loaded, AlphaTab renders notation + tablature with page/horizontal layout options and dedicated exports
 
 ---
 

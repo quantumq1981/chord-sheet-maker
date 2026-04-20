@@ -22,6 +22,8 @@ import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
+import AlphaTabRenderer from './renderers/AlphaTabRenderer';
+import AlphaTabControls from './components/AlphaTabControls';
 import {
   extractRehearsalMarkTexts,
   repositionRehearsalMarksBetweenSystems,
@@ -47,10 +49,12 @@ import type {
   OmrSummary,
 } from './types/omr';
 import { loadMusicXmlFromString } from './utils/loadMusicXmlFromString';
+import type { AlphaTabSettings } from './types/alphatab';
+import type { AlphaTabApi } from '@coderline/alphatab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AppMode = 'empty' | 'notation' | 'chord-chart' | 'tablature';
+type AppMode = 'empty' | 'notation' | 'chord-chart' | 'tablature' | 'alphatab';
 
 type Diagnostics = {
   isValidXml: boolean;
@@ -714,6 +718,20 @@ export default function App() {
   const [tabRenderError, setTabRenderError] = useState('');
   const [tabScoreData, setTabScoreData] = useState<VexTabScore | null>(null);
 
+  // ── AlphaTab mode state ──
+  const [alphaTabApi, setAlphaTabApi] = useState<AlphaTabApi | null>(null);
+  const [alphaTabSettings, setAlphaTabSettings] = useState<AlphaTabSettings>({
+    display: { layoutMode: 'page', barsPerRow: -1, startBar: 0, barCount: -1, scale: 1 },
+    player: { enablePlayer: true, soundFont: '/soundfont/sonivox/sonivox.sf2' },
+    notation: { smallGraceTabNotes: false },
+    core: { engine: 'svg', fontDirectory: '/font/' },
+  });
+  const [alphaTabTuning, setAlphaTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
+  const [alphaTabTuningPreset, setAlphaTabTuningPreset] = useState('Standard (EADGBe)');
+  const [alphaTabPartIndex, setAlphaTabPartIndex] = useState(0);
+  const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
+  const [alphaTabParts, setAlphaTabParts] = useState<string[]>([]);
+
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
     if (!loadedXmlText) return null;
@@ -957,6 +975,19 @@ export default function App() {
     setTabScoreData(null);
     setTabRenderError('');
     setTabPartIndex(0);
+    // AlphaTab
+    setAlphaTabApi(null);
+    setAlphaTabPartIndex(0);
+    setAlphaTabRenderError('');
+    setAlphaTabParts([]);
+    setAlphaTabTuning(TUNING_PRESETS['Standard (EADGBe)']);
+    setAlphaTabTuningPreset('Standard (EADGBe)');
+    setAlphaTabSettings({
+      display: { layoutMode: 'page', barsPerRow: -1, startBar: 0, barCount: -1, scale: 1 },
+      player: { enablePlayer: true, soundFont: '/soundfont/sonivox/sonivox.sf2' },
+      notation: { smallGraceTabNotes: false },
+      core: { engine: 'svg', fontDirectory: '/font/' },
+    });
     // OMR
     resetOmrState();
   }, [resetOmrState]);
@@ -1298,6 +1329,73 @@ export default function App() {
     }
   }, [baseName, getTabSvgEl, pdfPageSize, showExportError, showExportSuccess]);
 
+  const getAlphaTabSvgEls = useCallback((): SVGSVGElement[] => {
+    return Array.from(document.querySelectorAll('.alphatab-container svg'));
+  }, []);
+
+  const exportAlphaTabSvg = useCallback(() => {
+    const svgs = getAlphaTabSvgEls();
+    if (svgs.length === 0) { showExportError('No AlphaTab SVG found.'); return; }
+    try {
+      const combined = stitchSvgsToSingle(svgs);
+      triggerBlobDownload(new Blob([combined], { type: 'image/svg+xml;charset=utf-8' }), `${baseName}.alphatab.svg`);
+      showExportSuccess(`AlphaTab exported as SVG (${svgs.length} page(s)).`);
+    } catch (error) {
+      showExportError(`AlphaTab SVG export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, getAlphaTabSvgEls, showExportError, showExportSuccess]);
+
+  const exportAlphaTabPng = useCallback(async () => {
+    const svgs = getAlphaTabSvgEls();
+    if (svgs.length === 0) { showExportError('No AlphaTab SVG found.'); return; }
+    try {
+      const canvas = await stitchCanvases(svgs, 2);
+      const blob = await canvasToBlob(canvas, 'image/png');
+      triggerBlobDownload(blob, `${baseName}.alphatab.png`, true);
+      showExportSuccess(`AlphaTab exported as PNG (${svgs.length} page(s)).`);
+    } catch (error) {
+      showExportError(`AlphaTab PNG export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, getAlphaTabSvgEls, showExportError, showExportSuccess]);
+
+  const exportAlphaTabPdf = useCallback(async () => {
+    const svgs = getAlphaTabSvgEls();
+    if (svgs.length === 0) { showExportError('No AlphaTab SVG found.'); return; }
+    const isLetter = pdfPageSize === 'letter';
+    const unit = isLetter ? 'in' : 'mm';
+    const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
+    const margin = isLetter ? 0.5 : 12;
+    try {
+      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+      for (let index = 0; index < svgs.length; index++) {
+        const canvas = await svgToCanvas(svgs[index], 1.5);
+        const jpegData = canvas.toDataURL('image/jpeg', 0.92);
+        if (index > 0) pdf.addPage(format, 'portrait');
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const availableWidth = pageWidth - margin * 2;
+        const availableHeight = pageHeight - margin * 2;
+        const imgAspect = canvas.width / canvas.height;
+        let width = availableWidth;
+        let height = width / imgAspect;
+        if (height > availableHeight) {
+          height = availableHeight;
+          width = height * imgAspect;
+        }
+        const x = (pageWidth - width) / 2;
+        const y = (pageHeight - height) / 2;
+        pdf.addImage(jpegData, 'JPEG', x, y, width, height, undefined, 'FAST');
+      }
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+      setPdfFilename(`${baseName}.alphatab.pdf`);
+      showExportSuccess('AlphaTab PDF ready. Tap Open PDF.');
+    } catch (error) {
+      showExportError(`AlphaTab PDF export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, getAlphaTabSvgEls, pdfPageSize, showExportError, showExportSuccess]);
+
   const exportPdf = useCallback(async (maxPages?: number) => {
     const osmd = osmdRef.current;
     if (!osmd) { showExportError('Renderer is not ready yet.'); return; }
@@ -1572,6 +1670,7 @@ export default function App() {
 
   const canExportNotation = appMode === 'notation' && Boolean(loadedXmlText);
   const canExportTab = appMode === 'tablature' && Boolean(tabScoreData?.measures.length);
+  const canExportAlphaTab = appMode === 'alphatab' && Boolean(loadedXmlText);
 
   return (
     <div className="app-shell">
@@ -1588,7 +1687,7 @@ export default function App() {
           </span>
         )}
 
-        {(appMode === 'notation' || appMode === 'tablature') && (
+        {(appMode === 'notation' || appMode === 'tablature' || appMode === 'alphatab') && (
           <>
             {appMode === 'notation' ? (
               <>
@@ -1603,8 +1702,15 @@ export default function App() {
                 >
                   Tab View
                 </button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('alphatab')}
+                >
+                  AlphaTab View
+                </button>
               </>
-            ) : (
+            ) : appMode === 'tablature' ? (
               <>
                 <span className="mode-badge mode-badge--tablature">Tab View</span>
                 <button
@@ -1613,6 +1719,31 @@ export default function App() {
                   onClick={() => setAppMode('notation')}
                 >
                   Notation
+                </button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('alphatab')}
+                >
+                  AlphaTab View
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="mode-badge mode-badge--alphatab">AlphaTab View</span>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('notation')}
+                >
+                  Notation
+                </button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('tablature')}
+                >
+                  Tab View
                 </button>
               </>
             )}
@@ -1703,6 +1834,32 @@ export default function App() {
                 measuresPerRow={tabMeasuresPerRow}
                 onRenderError={(e) => setTabRenderError(e)}
               />
+            )}
+          </section>
+        ) : appMode === 'alphatab' ? (
+          <section
+            className={`score-viewport ${isDragging ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={onDrop}
+          >
+            {alphaTabRenderError && (
+              <div className="error-banner">AlphaTab render error: {alphaTabRenderError}</div>
+            )}
+            {loadedXmlText ? (
+              <AlphaTabRenderer
+                xmlText={loadedXmlText}
+                settings={alphaTabSettings}
+                partIndex={alphaTabPartIndex}
+                onApiReady={setAlphaTabApi}
+                onTracksChanged={(tracks) => {
+                  setAlphaTabParts(tracks.map((track, idx) => track.name || `Part ${idx + 1}`));
+                  setAlphaTabPartIndex((prev) => (prev >= tracks.length ? 0 : prev));
+                }}
+                onError={(error) => setAlphaTabRenderError(error)}
+              />
+            ) : (
+              <p className="placeholder">Load a MusicXML file to use AlphaTab view.</p>
             )}
           </section>
         ) : (
@@ -2209,6 +2366,54 @@ export default function App() {
                   Generate Tab PDF
                 </button>
               </div>
+
+              {pdfBlobUrl && (
+                <div className="pdf-ready-box">
+                  <p className="pdf-ready-title">PDF Ready</p>
+                  <div className="pdf-ready-actions">
+                    <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
+                      Open PDF
+                    </a>
+                    <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
+                    <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {appMode === 'alphatab' && loadedXmlText && (
+            <>
+              {alphaTabApi && (
+                <p className="hint-text">AlphaTab player is {alphaTabSettings.player.enablePlayer ? 'enabled' : 'disabled'}.</p>
+              )}
+              <AlphaTabControls
+                settings={alphaTabSettings}
+                onSettingsChange={setAlphaTabSettings}
+                tuningPreset={alphaTabTuningPreset}
+                tuning={alphaTabTuning}
+                tuningPresets={TUNING_PRESETS}
+                onTuningPresetChange={setAlphaTabTuningPreset}
+                onTuningChange={setAlphaTabTuning}
+                partIndex={alphaTabPartIndex}
+                partOptions={alphaTabParts}
+                onPartIndexChange={setAlphaTabPartIndex}
+                onExportSvg={exportAlphaTabSvg}
+                onExportPng={exportAlphaTabPng}
+                onExportPdf={exportAlphaTabPdf}
+                canExport={canExportAlphaTab}
+              />
+
+              <label className="export-label" htmlFor="alphatab-pdf-size">PDF Page Size</label>
+              <select
+                id="alphatab-pdf-size"
+                value={pdfPageSize}
+                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                disabled={!canExportAlphaTab}
+              >
+                <option value="letter">Letter (Portrait)</option>
+                <option value="a4">A4 (Portrait)</option>
+              </select>
 
               {pdfBlobUrl && (
                 <div className="pdf-ready-box">
