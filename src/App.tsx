@@ -830,14 +830,14 @@ export default function App() {
         window.clearTimeout(omrPollingTimerRef.current);
       }
     };
-  }, [chordProUi, transposeSemitones]);
+  }, []);
 
   const stopOmrPolling = useCallback(() => {
     if (omrPollingTimerRef.current !== null) {
       window.clearTimeout(omrPollingTimerRef.current);
       omrPollingTimerRef.current = null;
     }
-  }, [chordProUi]);
+  }, []);
 
   const resetOmrState = useCallback(() => {
     stopOmrPolling();
@@ -888,7 +888,7 @@ export default function App() {
     setTransposeWarnings([]);
     setDetectedFormatLabel(loadedFromMxl ? 'MXL (OMR)' : 'MusicXML (OMR)');
     setAppMode('notation');
-  }, [chordProUi, transposeSemitones]);
+  }, []);
 
   const fetchOmrFailure = useCallback(async (jobId: string) => {
     try {
@@ -1068,7 +1068,7 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error);
       setRenderError(`Failed to read file: ${message}`);
     }
-  }, [chordProUi, transposeSemitones]);
+  }, [chordProUi, transposeSemitones, transposeEnharmonic]);
 
   const onFileInput = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {

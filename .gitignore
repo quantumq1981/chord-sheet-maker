@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# AlphaTab Vite plugin copies fonts/soundfonts from node_modules at build time
+public/
+
 # TypeScript incremental build info
 *.tsbuildinfo
 
