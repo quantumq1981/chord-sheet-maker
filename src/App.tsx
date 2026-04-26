@@ -26,6 +26,8 @@ import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
+import AlphaTabRenderer from './renderers/AlphaTabRenderer';
+import AlphaTabControls from './components/AlphaTabControls';
 import {
   extractRehearsalMarkTexts,
   repositionRehearsalMarksBetweenSystems,
@@ -720,7 +722,7 @@ export default function App() {
 
   // ── AlphaTab mode state ──
   const [alphaTabSettings, setAlphaTabSettings] = useState<AlphaTabUiSettings>({
-    display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1 },
+    display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
     enablePlayer: false,
     partIndex: 0,
   });
@@ -836,14 +838,14 @@ export default function App() {
         window.clearTimeout(omrPollingTimerRef.current);
       }
     };
-  }, [chordProUi, transposeSemitones]);
+  }, []);
 
   const stopOmrPolling = useCallback(() => {
     if (omrPollingTimerRef.current !== null) {
       window.clearTimeout(omrPollingTimerRef.current);
       omrPollingTimerRef.current = null;
     }
-  }, [chordProUi]);
+  }, []);
 
   const resetOmrState = useCallback(() => {
     stopOmrPolling();
@@ -894,7 +896,7 @@ export default function App() {
     setTransposeWarnings([]);
     setDetectedFormatLabel(loadedFromMxl ? 'MXL (OMR)' : 'MusicXML (OMR)');
     setAppMode('notation');
-  }, [chordProUi, transposeSemitones]);
+  }, []);
 
   const fetchOmrFailure = useCallback(async (jobId: string) => {
     try {
@@ -981,6 +983,14 @@ export default function App() {
     setTabScoreData(null);
     setTabRenderError('');
     setTabPartIndex(0);
+    // AlphaTab
+    setAlphaTabRenderError('');
+    setAlphaTabNotePositions([]);
+    setAlphaTabSettings({
+      display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
+      enablePlayer: false,
+      partIndex: 0,
+    });
     // OMR
     resetOmrState();
   }, [resetOmrState]);
@@ -1061,7 +1071,7 @@ export default function App() {
       const message = error instanceof Error ? error.message : String(error);
       setRenderError(`Failed to read file: ${message}`);
     }
-  }, [chordProUi, transposeSemitones]);
+  }, [chordProUi, transposeSemitones, transposeEnharmonic]);
 
   const onFileInput = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1321,6 +1331,73 @@ export default function App() {
       showExportError(`Tab PDF failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }, [baseName, getTabSvgEl, pdfPageSize, showExportError, showExportSuccess]);
+
+  const getAlphaTabSvgEls = useCallback((): SVGSVGElement[] => {
+    return Array.from(document.querySelectorAll('.alphatab-container svg'));
+  }, []);
+
+  const exportAlphaTabSvg = useCallback(() => {
+    const svgs = getAlphaTabSvgEls();
+    if (svgs.length === 0) { showExportError('No AlphaTab SVG found.'); return; }
+    try {
+      const combined = stitchSvgsToSingle(svgs);
+      triggerBlobDownload(new Blob([combined], { type: 'image/svg+xml;charset=utf-8' }), `${baseName}.alphatab.svg`);
+      showExportSuccess(`AlphaTab exported as SVG (${svgs.length} page(s)).`);
+    } catch (error) {
+      showExportError(`AlphaTab SVG export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, getAlphaTabSvgEls, showExportError, showExportSuccess]);
+
+  const exportAlphaTabPng = useCallback(async () => {
+    const svgs = getAlphaTabSvgEls();
+    if (svgs.length === 0) { showExportError('No AlphaTab SVG found.'); return; }
+    try {
+      const canvas = await stitchCanvases(svgs, 2);
+      const blob = await canvasToBlob(canvas, 'image/png');
+      triggerBlobDownload(blob, `${baseName}.alphatab.png`, true);
+      showExportSuccess(`AlphaTab exported as PNG (${svgs.length} page(s)).`);
+    } catch (error) {
+      showExportError(`AlphaTab PNG export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, getAlphaTabSvgEls, showExportError, showExportSuccess]);
+
+  const exportAlphaTabPdf = useCallback(async () => {
+    const svgs = getAlphaTabSvgEls();
+    if (svgs.length === 0) { showExportError('No AlphaTab SVG found.'); return; }
+    const isLetter = pdfPageSize === 'letter';
+    const unit = isLetter ? 'in' : 'mm';
+    const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
+    const margin = isLetter ? 0.5 : 12;
+    try {
+      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+      for (let index = 0; index < svgs.length; index++) {
+        const canvas = await svgToCanvas(svgs[index], 1.5);
+        const jpegData = canvas.toDataURL('image/jpeg', 0.92);
+        if (index > 0) pdf.addPage(format, 'portrait');
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const availableWidth = pageWidth - margin * 2;
+        const availableHeight = pageHeight - margin * 2;
+        const imgAspect = canvas.width / canvas.height;
+        let width = availableWidth;
+        let height = width / imgAspect;
+        if (height > availableHeight) {
+          height = availableHeight;
+          width = height * imgAspect;
+        }
+        const x = (pageWidth - width) / 2;
+        const y = (pageHeight - height) / 2;
+        pdf.addImage(jpegData, 'JPEG', x, y, width, height, undefined, 'FAST');
+      }
+      const blob = pdf.output('blob');
+      const url = URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+      setPdfFilename(`${baseName}.alphatab.pdf`);
+      showExportSuccess('AlphaTab PDF ready. Tap Open PDF.');
+    } catch (error) {
+      showExportError(`AlphaTab PDF export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, getAlphaTabSvgEls, pdfPageSize, showExportError, showExportSuccess]);
 
   const exportPdf = useCallback(async (maxPages?: number) => {
     const osmd = osmdRef.current;
@@ -1596,6 +1673,7 @@ export default function App() {
 
   const canExportNotation = appMode === 'notation' && Boolean(loadedXmlText);
   const canExportTab = appMode === 'tablature' && Boolean(tabScoreData?.measures.length);
+  const canExportAlphaTab = appMode === 'alphatab' && Boolean(loadedXmlText);
 
   return (
     <div className="app-shell">
@@ -2308,6 +2386,20 @@ export default function App() {
                 parts={tabScoreData?.parts ?? []}
                 onSettingsChange={setAlphaTabSettings}
               />
+
+              <h2>Export AlphaTab</h2>
+              <div className="export-actions">
+                <button type="button" onClick={exportAlphaTabSvg} disabled={!canExportAlphaTab}>
+                  Export SVG
+                </button>
+                <button type="button" onClick={() => void exportAlphaTabPng()} disabled={!canExportAlphaTab}>
+                  Export PNG
+                </button>
+                <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
+                  Generate PDF
+                </button>
+              </div>
+
               <FretboardPositionsPanel
                 notePositions={alphaTabNotePositions}
                 stringCount={tabTuning.length}

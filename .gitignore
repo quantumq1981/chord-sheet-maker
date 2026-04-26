@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# AlphaTab static assets are tracked in public/ (served directly; no Vite plugin)
+# dist/ (build output) is excluded below
+
 # TypeScript incremental build info
 *.tsbuildinfo
 

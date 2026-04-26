@@ -59,6 +59,7 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     if (uiSettings.display.barsPerRow > 0) {
       (s.display as alphaTab.DisplaySettings).barsPerRow = uiSettings.display.barsPerRow;
     }
+    (s.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
     return s;
   }, [fontDir, workerUrl, uiSettings]);
 
@@ -100,7 +101,6 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
         onError?.(msg);
       });
 
-    // alphaTab fires 'postRenderFinished' once the initial layout is done.
     // Use renderFinished as the "ready" signal and then load any pending score.
     api.renderFinished.on(() => {
       if (!readyRef.current) {
@@ -113,7 +113,6 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
       }
     });
 
-    // Queue the initial score load; we load after the first renderFinished.
     pendingXmlRef.current = xmlText;
 
     return () => {
@@ -137,8 +136,17 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     loadXml(apiRef.current, xmlText, uiSettings.partIndex);
   }, [xmlText, uiSettings.partIndex, loadXml]);
 
-  // Re-render when display settings change (requires full API recreation).
-  // We do this by destroying + recreating the API when layout-affecting settings change.
+  // Apply scale changes live without full API recreation.
+  const prevScaleRef = useRef(uiSettings.display.scale);
+  useEffect(() => {
+    if (prevScaleRef.current === uiSettings.display.scale) return;
+    prevScaleRef.current = uiSettings.display.scale;
+    if (!apiRef.current || !readyRef.current) return;
+    (apiRef.current.settings.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
+    apiRef.current.updateSettings();
+  }, [uiSettings.display.scale]);
+
+  // Re-render when layout-affecting settings change (stave profile, layout mode, bars per row).
   const prevStaveRef = useRef(uiSettings.display.staveProfile);
   const prevLayoutRef = useRef(uiSettings.display.layoutMode);
   const prevBarsRef = useRef(uiSettings.display.barsPerRow);
@@ -186,6 +194,13 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     pendingXmlRef.current = xmlText;
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
       xmlText, uiSettings.partIndex, buildSettings, loadXml, onApiReady, onError]);
+
+  // Notify AlphaTab when the window resizes.
+  useEffect(() => {
+    const onResize = () => apiRef.current?.updateSettings();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   return (
     <div className="alphatab-wrapper">

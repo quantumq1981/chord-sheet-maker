@@ -8,6 +8,8 @@ export interface AlphaTabDisplaySettings {
   layoutMode: AlphaTabLayoutMode;
   /** Bars per system row; -1 = auto. */
   barsPerRow: number;
+  /** Render scale multiplier; 1 = 100%. */
+  scale: number;
 }
 
 export interface AlphaTabUiSettings {

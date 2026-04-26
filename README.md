@@ -2,6 +2,12 @@
 
 A Vite + React + TypeScript app for rendering MusicXML (`.xml`, `.musicxml`) and compressed MusicXML (`.mxl`) directly in the browser using OpenSheetMusicDisplay.
 
+## Rendering modes
+
+- **Notation** (OpenSheetMusicDisplay)
+- **Tab View** (VexFlow)
+- **AlphaTab View** (AlphaTab notation + tablature renderer)
+
 ## Supported uploads
 
 - `.xml` (MusicXML text)
@@ -36,6 +42,11 @@ After loading a file, use the **Export** section in the side panel to:
 PDF export scales each page to fit available printable area while preserving aspect ratio to avoid cutoffs. Multi-page scores are exported as multi-page PDFs.
 
 For iOS Safari, exports use a best-effort fallback by opening the generated blob URL in a new tab when direct download behavior is restricted.
+
+## Third-party licenses
+
+- **AlphaTab** (`@coderline/alphatab`) is licensed under **MPL-2.0**.
+- This repository does not modify AlphaTab source files. If any local modifications are made in the future, they must remain available under MPL-2.0 terms.
 
 
 ## ChordPro Export
@@ -127,4 +138,3 @@ Then open the app and:
 - test **sync mode** with a clean PNG/JPG for fast mobile-friendly processing
 - test **async mode** with a PDF for longer-running jobs
 - continue using direct `.xml` / `.musicxml` / `.mxl` upload as before
-

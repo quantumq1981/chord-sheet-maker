@@ -45,6 +45,22 @@ export default function AlphaTabControls({ settings, parts, onSettingsChange }: 
         <option value="horizontal">Horizontal scroll</option>
       </select>
 
+      <div className="tab-settings-row">
+        <label className="export-label" htmlFor="at-scale">
+          Zoom: {Math.round(settings.display.scale * 100)}%
+        </label>
+        <input
+          id="at-scale"
+          type="range"
+          min={0.5}
+          max={2}
+          step={0.05}
+          value={settings.display.scale}
+          onChange={(e) => setDisplay('scale', Number(e.target.value))}
+          className="tab-range"
+        />
+      </div>
+
       <label className="export-label" htmlFor="at-bars">
         Bars per row ({settings.display.barsPerRow < 1 ? 'auto' : settings.display.barsPerRow})
       </label>

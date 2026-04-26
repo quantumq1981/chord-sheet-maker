@@ -237,6 +237,10 @@ export function getDefaultConvertOptions(): ConvertOptions {
   };
 }
 
+// 50 MB compressed, 20 MB decompressed — generous for any real MusicXML score
+const MXL_MAX_COMPRESSED_BYTES = 50 * 1024 * 1024;
+const MXL_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024;
+
 export async function extractMusicXmlTextFromFile(file: File): Promise<{
   filename: string;
   xmlText: string;
@@ -247,6 +251,12 @@ export async function extractMusicXmlTextFromFile(file: File): Promise<{
 
   if (!isMxl) {
     return { filename, xmlText: await file.text(), isMxl: false };
+  }
+
+  if (file.size > MXL_MAX_COMPRESSED_BYTES) {
+    throw new Error(
+      `MXL file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed: ${MXL_MAX_COMPRESSED_BYTES / 1024 / 1024} MB.`,
+    );
   }
 
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
@@ -273,11 +283,14 @@ export async function extractMusicXmlTextFromFile(file: File): Promise<{
     throw new Error(`Invalid MXL: score file '${rootPath}' not found.`);
   }
 
-  return {
-    filename,
-    xmlText: await scoreEntry.async("text"),
-    isMxl: true,
-  };
+  const xmlText = await scoreEntry.async("text");
+  if (xmlText.length > MXL_MAX_UNCOMPRESSED_BYTES) {
+    throw new Error(
+      `MXL score file decompresses to ${(xmlText.length / 1024 / 1024).toFixed(1)} MB, which exceeds the ${MXL_MAX_UNCOMPRESSED_BYTES / 1024 / 1024} MB safety limit.`,
+    );
+  }
+
+  return { filename, xmlText, isMxl: true };
 }
 
 export function convertMusicXmlToChordPro(
@@ -1061,13 +1074,15 @@ function renderFakebook(
     }
   }
 
-  console.log(
-    `[fakebook] measures=${stats.measuresTotal} ` +
-    `single=${stats.single} split=${stats.split} ` +
-    `repeat=${stats.repeat} empty=${stats.empty} ` +
-    `dur-reduced=${stats.durationReduced} ` +
-    `enh=${enhStyle} jazz=${useJazzSymbols} phrase-sep=${usePhraseSep}`,
-  );
+  if (import.meta.env.DEV) {
+    console.log(
+      `[fakebook] measures=${stats.measuresTotal} ` +
+      `single=${stats.single} split=${stats.split} ` +
+      `repeat=${stats.repeat} empty=${stats.empty} ` +
+      `dur-reduced=${stats.durationReduced} ` +
+      `enh=${enhStyle} jazz=${useJazzSymbols} phrase-sep=${usePhraseSep}`,
+    );
+  }
 
   return { lines, stats, enharmonicStyleApplied: enhStyle };
 }
