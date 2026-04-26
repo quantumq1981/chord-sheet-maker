@@ -10,7 +10,11 @@ import {
   type ConverterDiagnostics,
   type RepeatStrategy,
 } from './converters/musicXMLtochordpro';
-import { musicXMLToVexTabScore, type VexTabScore } from './converters/musicXMLtoVexFlow';
+import { musicXMLToVexTabScore, getScoreNotePositions, type VexTabScore, type NotePositionMap } from './converters/musicXMLtoVexFlow';
+import AlphaTabRenderer from './renderers/AlphaTabRenderer';
+import AlphaTabControls from './components/AlphaTabControls';
+import FretboardPositionsPanel from './components/FretboardPositionsPanel';
+import type { AlphaTabUiSettings } from './types/alphatab';
 import {
   sniffFormatFromBytes,
   isMusicXmlFormat,
@@ -49,8 +53,6 @@ import type {
   OmrSummary,
 } from './types/omr';
 import { loadMusicXmlFromString } from './utils/loadMusicXmlFromString';
-import type { AlphaTabSettings } from './types/alphatab';
-import type { AlphaTabApi } from '@coderline/alphatab';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -719,18 +721,13 @@ export default function App() {
   const [tabScoreData, setTabScoreData] = useState<VexTabScore | null>(null);
 
   // ── AlphaTab mode state ──
-  const [alphaTabApi, setAlphaTabApi] = useState<AlphaTabApi | null>(null);
-  const [alphaTabSettings, setAlphaTabSettings] = useState<AlphaTabSettings>({
-    display: { layoutMode: 'page', barsPerRow: -1, startBar: 0, barCount: -1, scale: 1 },
-    player: { enablePlayer: true, soundFont: '/soundfont/sonivox/sonivox.sf2' },
-    notation: { smallGraceTabNotes: false },
-    core: { engine: 'svg', fontDirectory: '/font/' },
+  const [alphaTabSettings, setAlphaTabSettings] = useState<AlphaTabUiSettings>({
+    display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
+    enablePlayer: false,
+    partIndex: 0,
   });
-  const [alphaTabTuning, setAlphaTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
-  const [alphaTabTuningPreset, setAlphaTabTuningPreset] = useState('Standard (EADGBe)');
-  const [alphaTabPartIndex, setAlphaTabPartIndex] = useState(0);
   const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
-  const [alphaTabParts, setAlphaTabParts] = useState<string[]>([]);
+  const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
 
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
@@ -761,6 +758,17 @@ export default function App() {
 
   // Sync computed score into state so the renderer gets it reactively
   useEffect(() => { setTabScoreData(tabScore); }, [tabScore]);
+
+  // ── AlphaTab: all-positions note map ──
+  // Recomputes when XML, tuning, or part changes (same inputs as tabScore).
+  const alphaTabNotePositionsComputed = useMemo<NotePositionMap[]>(() => {
+    if (!loadedXmlText || !diagnostics?.isMusicXml) return [];
+    return getScoreNotePositions(loadedXmlText, tabTuning, alphaTabSettings.partIndex);
+  }, [loadedXmlText, tabTuning, alphaTabSettings.partIndex, diagnostics?.isMusicXml]);
+
+  useEffect(() => {
+    setAlphaTabNotePositions(alphaTabNotePositionsComputed);
+  }, [alphaTabNotePositionsComputed]);
 
   useEffect(() => {
     if (!pristineXmlText) return;
@@ -976,17 +984,12 @@ export default function App() {
     setTabRenderError('');
     setTabPartIndex(0);
     // AlphaTab
-    setAlphaTabApi(null);
-    setAlphaTabPartIndex(0);
     setAlphaTabRenderError('');
-    setAlphaTabParts([]);
-    setAlphaTabTuning(TUNING_PRESETS['Standard (EADGBe)']);
-    setAlphaTabTuningPreset('Standard (EADGBe)');
+    setAlphaTabNotePositions([]);
     setAlphaTabSettings({
-      display: { layoutMode: 'page', barsPerRow: -1, startBar: 0, barCount: -1, scale: 1 },
-      player: { enablePlayer: true, soundFont: '/soundfont/sonivox/sonivox.sf2' },
-      notation: { smallGraceTabNotes: false },
-      core: { engine: 'svg', fontDirectory: '/font/' },
+      display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
+      enablePlayer: false,
+      partIndex: 0,
     });
     // OMR
     resetOmrState();
@@ -1704,7 +1707,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  className="mode-badge mode-badge--tab-toggle"
+                  className="mode-badge mode-badge--alphatab-toggle"
                   onClick={() => setAppMode('alphatab')}
                 >
                   AlphaTab View
@@ -1722,7 +1725,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  className="mode-badge mode-badge--tab-toggle"
+                  className="mode-badge mode-badge--alphatab-toggle"
                   onClick={() => setAppMode('alphatab')}
                 >
                   AlphaTab View
@@ -1730,7 +1733,7 @@ export default function App() {
               </>
             ) : (
               <>
-                <span className="mode-badge mode-badge--alphatab">AlphaTab View</span>
+                <span className="mode-badge mode-badge--alphatab">AlphaTab</span>
                 <button
                   type="button"
                   className="mode-badge mode-badge--tab-toggle"
@@ -1838,28 +1841,21 @@ export default function App() {
           </section>
         ) : appMode === 'alphatab' ? (
           <section
-            className={`score-viewport ${isDragging ? 'dragging' : ''}`}
+            className={`score-viewport alphatab-viewport ${isDragging ? 'dragging' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
           >
             {alphaTabRenderError && (
-              <div className="error-banner">AlphaTab render error: {alphaTabRenderError}</div>
+              <div className="error-banner">AlphaTab error: {alphaTabRenderError}</div>
             )}
-            {loadedXmlText ? (
+            {loadedXmlText && (
               <AlphaTabRenderer
+                key={`at-${loadedXmlText.slice(0, 40)}`}
                 xmlText={loadedXmlText}
-                settings={alphaTabSettings}
-                partIndex={alphaTabPartIndex}
-                onApiReady={setAlphaTabApi}
-                onTracksChanged={(tracks) => {
-                  setAlphaTabParts(tracks.map((track, idx) => track.name || `Part ${idx + 1}`));
-                  setAlphaTabPartIndex((prev) => (prev >= tracks.length ? 0 : prev));
-                }}
-                onError={(error) => setAlphaTabRenderError(error)}
+                uiSettings={alphaTabSettings}
+                onError={(e) => setAlphaTabRenderError(e)}
               />
-            ) : (
-              <p className="placeholder">Load a MusicXML file to use AlphaTab view.</p>
             )}
           </section>
         ) : (
@@ -2382,51 +2378,32 @@ export default function App() {
             </>
           )}
 
+          {/* ── AlphaTab mode panel ── */}
           {appMode === 'alphatab' && loadedXmlText && (
             <>
-              {alphaTabApi && (
-                <p className="hint-text">AlphaTab player is {alphaTabSettings.player.enablePlayer ? 'enabled' : 'disabled'}.</p>
-              )}
               <AlphaTabControls
                 settings={alphaTabSettings}
+                parts={tabScoreData?.parts ?? []}
                 onSettingsChange={setAlphaTabSettings}
-                tuningPreset={alphaTabTuningPreset}
-                tuning={alphaTabTuning}
-                tuningPresets={TUNING_PRESETS}
-                onTuningPresetChange={setAlphaTabTuningPreset}
-                onTuningChange={setAlphaTabTuning}
-                partIndex={alphaTabPartIndex}
-                partOptions={alphaTabParts}
-                onPartIndexChange={setAlphaTabPartIndex}
-                onExportSvg={exportAlphaTabSvg}
-                onExportPng={exportAlphaTabPng}
-                onExportPdf={exportAlphaTabPdf}
-                canExport={canExportAlphaTab}
               />
 
-              <label className="export-label" htmlFor="alphatab-pdf-size">PDF Page Size</label>
-              <select
-                id="alphatab-pdf-size"
-                value={pdfPageSize}
-                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
-                disabled={!canExportAlphaTab}
-              >
-                <option value="letter">Letter (Portrait)</option>
-                <option value="a4">A4 (Portrait)</option>
-              </select>
+              <h2>Export AlphaTab</h2>
+              <div className="export-actions">
+                <button type="button" onClick={exportAlphaTabSvg} disabled={!canExportAlphaTab}>
+                  Export SVG
+                </button>
+                <button type="button" onClick={() => void exportAlphaTabPng()} disabled={!canExportAlphaTab}>
+                  Export PNG
+                </button>
+                <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
+                  Generate PDF
+                </button>
+              </div>
 
-              {pdfBlobUrl && (
-                <div className="pdf-ready-box">
-                  <p className="pdf-ready-title">PDF Ready</p>
-                  <div className="pdf-ready-actions">
-                    <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
-                      Open PDF
-                    </a>
-                    <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
-                    <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
-                  </div>
-                </div>
-              )}
+              <FretboardPositionsPanel
+                notePositions={alphaTabNotePositions}
+                stringCount={tabTuning.length}
+              />
             </>
           )}
 

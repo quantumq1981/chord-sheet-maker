@@ -505,3 +505,93 @@ function emptyScore(warnings: string[], reason: string): VexTabScore {
     warnings,
   };
 }
+
+// ─── All-positions / fretboard diagram API ────────────────────────────────────
+
+/** One note pitch and every string/fret position where it can be played. */
+export interface NotePositionMap {
+  /** MIDI pitch number. */
+  midi: number;
+  /** Friendly name, e.g. "A4", "C#3". */
+  name: string;
+  /** Every valid (string, fret) pair within frets 0–22. */
+  positions: VexTabPosition[];
+}
+
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+function midiToName(midi: number): string {
+  const pc = ((midi % 12) + 12) % 12;
+  const oct = Math.floor(midi / 12) - 1;
+  return `${NOTE_NAMES[pc]}${oct}`;
+}
+
+/**
+ * Return every valid (string, fret) position for a MIDI pitch given the open-
+ * string MIDI values.  Unlike midiToPosition() this returns all candidates, not
+ * just the lowest-fret one, so callers can display every voicing option.
+ */
+export function getAllFretboardPositions(
+  midi: number,
+  openMidis: number[],
+): VexTabPosition[] {
+  const positions: VexTabPosition[] = [];
+  for (let i = 0; i < openMidis.length; i++) {
+    const fret = midi - openMidis[i];
+    if (fret >= 0 && fret <= MAX_FRET) {
+      positions.push({ str: i + 1, fret });
+    }
+  }
+  return positions;
+}
+
+/**
+ * Parse a MusicXML document and collect every unique pitch that appears in the
+ * selected part (default: part 0).  For each pitch, compute all playable
+ * positions across the fretboard given the supplied tuning.
+ *
+ * Returns the results ordered by ascending MIDI pitch value so the caller can
+ * render them in a logical musical order (low → high).
+ */
+export function getScoreNotePositions(
+  xmlText: string,
+  tuning: string[],
+  partIndex = 0,
+): NotePositionMap[] {
+  let doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror')) return [];
+  if (doc.documentElement.nodeName === 'score-timewise') {
+    doc = timewiseToPartwise(doc);
+  }
+  if (doc.documentElement.nodeName !== 'score-partwise') return [];
+
+  const openMidis = tuning.map(parseTuningNote);
+  for (let i = 0; i < openMidis.length; i++) {
+    if (openMidis[i] === 0) openMidis[i] = STANDARD_OPEN_MIDI[i] ?? 40;
+  }
+
+  const partEls = Array.from(doc.querySelectorAll('score-partwise > part'));
+  const selectedPart = partEls[Math.min(partIndex, partEls.length - 1)];
+  if (!selectedPart) return [];
+
+  const seenMidi = new Set<number>();
+  for (const noteEl of Array.from(selectedPart.querySelectorAll('note'))) {
+    if (noteEl.querySelector('rest')) continue;
+    const p = noteEl.querySelector('pitch');
+    if (!p) continue;
+    const step = textContent(p.querySelector('step'));
+    const alter = parseFloat(textContent(p.querySelector('alter')) || '0');
+    const octave = parseInt(textContent(p.querySelector('octave')), 10);
+    if (!step || !Number.isFinite(octave)) continue;
+    seenMidi.add(pitchToMidi(step, alter, octave));
+  }
+
+  return Array.from(seenMidi)
+    .sort((a, b) => a - b)
+    .map((midi) => ({
+      midi,
+      name: midiToName(midi),
+      positions: getAllFretboardPositions(midi, openMidis),
+    }))
+    .filter((n) => n.positions.length > 0);
+}

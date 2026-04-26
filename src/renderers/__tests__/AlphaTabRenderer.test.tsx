@@ -1,27 +1,27 @@
 import { render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import AlphaTabRenderer from '../AlphaTabRenderer';
-import type { AlphaTabSettings } from '../../types/alphatab';
+import type { AlphaTabUiSettings } from '../../types/alphatab';
 
 const destroyMock = vi.fn();
 const renderScoreMock = vi.fn();
-const updateSettingsMock = vi.fn();
 
-const scoreLoadedOnMock = vi.fn();
-const errorOnMock = vi.fn();
+let renderFinishedCallbacks: Array<() => void> = [];
 
 vi.mock('@coderline/alphatab', () => {
   class Settings {
-    core = { engine: 'svg', fontDirectory: '/font/' };
-    display = { layoutMode: 'page', barsPerRow: -1, startBar: 0, barCount: -1, scale: 1 };
-    notation = { smallGraceTabNotes: false };
-    player = { enablePlayer: true, soundFont: '/soundfont/sonivox/sonivox.sf2' };
+    core: Record<string, unknown> = { fontDirectory: '/font/', workerFile: '/alphaTab.worker.min.mjs' };
+    display = { layoutMode: 0, staveProfile: 1, barsPerRow: -1, scale: 1 };
+    player = { enablePlayer: false };
   }
 
   class AlphaTabApi {
     public settings: Settings;
-    public scoreLoaded = { on: scoreLoadedOnMock };
-    public error = { on: errorOnMock };
+    public renderFinished = {
+      on: (fn: () => void) => { renderFinishedCallbacks.push(fn); },
+    };
+    public renderStarted = { on: vi.fn() };
+    public error = { on: vi.fn() };
 
     constructor(_container: HTMLDivElement, settings: Settings) {
       this.settings = settings;
@@ -29,12 +29,15 @@ vi.mock('@coderline/alphatab', () => {
 
     destroy = destroyMock;
     renderScore = renderScoreMock;
-    updateSettings = updateSettingsMock;
+    updateSettings = vi.fn();
   }
 
   return {
     Settings,
     AlphaTabApi,
+    LayoutMode: { Page: 0, Horizontal: 1 },
+    StaveProfile: { Default: 0, ScoreTab: 1, Score: 2, Tab: 3 },
+    DisplaySettings: Settings,
     importer: {
       ScoreLoader: {
         loadScoreFromBytes: vi.fn(() => ({ tracks: [{ name: 'Guitar' }] })),
@@ -43,34 +46,43 @@ vi.mock('@coderline/alphatab', () => {
   };
 });
 
-const defaultSettings: AlphaTabSettings = {
-  core: { engine: 'svg', fontDirectory: '/font/' },
-  display: { layoutMode: 'page', barsPerRow: -1, startBar: 0, barCount: -1, scale: 1 },
-  notation: { smallGraceTabNotes: false },
-  player: { enablePlayer: true, soundFont: '/soundfont/sonivox/sonivox.sf2' },
+const defaultSettings: AlphaTabUiSettings = {
+  display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
+  enablePlayer: false,
+  partIndex: 0,
 };
 
-describe('AlphaTabRenderer', () => {
-  it('initializes and destroys the API on mount/unmount', () => {
-    const { unmount } = render(
-      <AlphaTabRenderer xmlText="<score-partwise />" settings={defaultSettings} partIndex={0} />,
-    );
+beforeEach(() => {
+  renderFinishedCallbacks = [];
+  vi.clearAllMocks();
+});
 
-    expect(renderScoreMock).toHaveBeenCalled();
+describe('AlphaTabRenderer', () => {
+  it('mounts and destroys the API on unmount', () => {
+    const { unmount } = render(
+      <AlphaTabRenderer xmlText="<score-partwise />" uiSettings={defaultSettings} />,
+    );
     unmount();
     expect(destroyMock).toHaveBeenCalled();
   });
 
-  it('reports parsing errors through onError', () => {
+  it('calls renderScore after ready signal fires', () => {
+    render(
+      <AlphaTabRenderer xmlText="<score-partwise />" uiSettings={defaultSettings} />,
+    );
+    // Simulate AlphaTab firing the ready signal (renderFinished).
+    renderFinishedCallbacks.forEach((fn) => fn());
+    expect(renderScoreMock).toHaveBeenCalled();
+  });
+
+  it('reports errors via onError when renderScore throws', () => {
     const onError = vi.fn();
-    vi.mocked(renderScoreMock).mockImplementationOnce(() => {
-      throw new Error('bad xml');
-    });
+    renderScoreMock.mockImplementationOnce(() => { throw new Error('bad xml'); });
 
     render(
-      <AlphaTabRenderer xmlText="<broken" settings={defaultSettings} partIndex={0} onError={onError} />,
+      <AlphaTabRenderer xmlText="<broken" uiSettings={defaultSettings} onError={onError} />,
     );
-
+    renderFinishedCallbacks.forEach((fn) => fn());
     expect(onError).toHaveBeenCalledWith('bad xml');
   });
 });

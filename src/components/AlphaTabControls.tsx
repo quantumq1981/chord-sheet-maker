@@ -1,145 +1,93 @@
-import type { ChangeEvent } from 'react';
-import type { AlphaTabSettings } from '../types/alphatab';
+import type { AlphaTabUiSettings } from '../types/alphatab';
 
-interface AlphaTabControlsProps {
-  settings: AlphaTabSettings;
-  onSettingsChange: (settings: AlphaTabSettings) => void;
-  tuningPreset: string;
-  tuning: string[];
-  tuningPresets: Record<string, string[]>;
-  onTuningPresetChange: (preset: string) => void;
-  onTuningChange: (next: string[]) => void;
-  partIndex: number;
-  partOptions: string[];
-  onPartIndexChange: (index: number) => void;
-  onExportSvg: () => void;
-  onExportPng: () => Promise<void>;
-  onExportPdf: () => Promise<void>;
-  canExport: boolean;
+interface Part {
+  id: string;
+  name: string;
 }
 
-export default function AlphaTabControls({
-  settings,
-  onSettingsChange,
-  tuningPreset,
-  tuning,
-  tuningPresets,
-  onTuningPresetChange,
-  onTuningChange,
-  partIndex,
-  partOptions,
-  onPartIndexChange,
-  onExportSvg,
-  onExportPng,
-  onExportPdf,
-  canExport,
-}: AlphaTabControlsProps) {
-  const update = (next: Partial<AlphaTabSettings>) => {
-    onSettingsChange({ ...settings, ...next });
-  };
+interface Props {
+  settings: AlphaTabUiSettings;
+  parts: Part[];
+  onSettingsChange: (next: AlphaTabUiSettings) => void;
+}
 
-  const onLayoutMode = (event: ChangeEvent<HTMLSelectElement>) => {
-    update({ display: { ...settings.display, layoutMode: event.target.value as 'page' | 'horizontal' } });
-  };
+export default function AlphaTabControls({ settings, parts, onSettingsChange }: Props) {
+  const set = <K extends keyof AlphaTabUiSettings>(key: K, value: AlphaTabUiSettings[K]) =>
+    onSettingsChange({ ...settings, [key]: value });
 
-  const onBarsPerRow = (event: ChangeEvent<HTMLInputElement>) => {
-    const value = Number(event.target.value);
-    update({ display: { ...settings.display, barsPerRow: Number.isFinite(value) ? Math.max(-1, Math.min(12, value)) : -1 } });
-  };
-
-  const onZoom = (event: ChangeEvent<HTMLInputElement>) => {
-    const value = Number(event.target.value);
-    update({ display: { ...settings.display, scale: Number.isFinite(value) ? Math.max(0.5, Math.min(2, value)) : 1 } });
-  };
+  const setDisplay = <K extends keyof AlphaTabUiSettings['display']>(
+    key: K, value: AlphaTabUiSettings['display'][K],
+  ) => onSettingsChange({ ...settings, display: { ...settings.display, [key]: value } });
 
   return (
     <>
       <h2>AlphaTab Settings</h2>
 
-      <label className="export-label" htmlFor="alphatab-layout">Layout mode</label>
-      <select id="alphatab-layout" value={settings.display.layoutMode} onChange={onLayoutMode}>
-        <option value="page">Page</option>
-        <option value="horizontal">Horizontal</option>
+      <label className="export-label" htmlFor="at-stave">Stave profile</label>
+      <select
+        id="at-stave"
+        value={settings.display.staveProfile}
+        onChange={(e) => setDisplay('staveProfile', e.target.value as AlphaTabUiSettings['display']['staveProfile'])}
+      >
+        <option value="scoreTab">Notation + Tab (both)</option>
+        <option value="score">Notation only</option>
+        <option value="tab">Tab only</option>
+        <option value="default">Default (from file)</option>
       </select>
 
-      <label className="export-label" htmlFor="alphatab-bars">Bars per row (-1 auto)</label>
-      <input
-        id="alphatab-bars"
-        type="number"
-        min={-1}
-        max={12}
-        value={settings.display.barsPerRow}
-        onChange={onBarsPerRow}
-      />
+      <label className="export-label" htmlFor="at-layout">Layout</label>
+      <select
+        id="at-layout"
+        value={settings.display.layoutMode}
+        onChange={(e) => setDisplay('layoutMode', e.target.value as AlphaTabUiSettings['display']['layoutMode'])}
+      >
+        <option value="page">Page</option>
+        <option value="horizontal">Horizontal scroll</option>
+      </select>
 
       <div className="tab-settings-row">
-        <label className="export-label" htmlFor="alphatab-zoom">Zoom: {settings.display.scale.toFixed(2)}x</label>
+        <label className="export-label" htmlFor="at-scale">
+          Zoom: {Math.round(settings.display.scale * 100)}%
+        </label>
         <input
-          id="alphatab-zoom"
+          id="at-scale"
           type="range"
           min={0.5}
           max={2}
           step={0.05}
           value={settings.display.scale}
-          onChange={onZoom}
+          onChange={(e) => setDisplay('scale', Number(e.target.value))}
           className="tab-range"
         />
       </div>
 
-      <label className="export-label" htmlFor="alphatab-tuning-preset">Tuning preset</label>
-      <select
-        id="alphatab-tuning-preset"
-        value={tuningPreset}
-        onChange={(event) => {
-          const preset = event.target.value;
-          onTuningPresetChange(preset);
-          if (tuningPresets[preset]) {
-            onTuningChange(tuningPresets[preset]);
-          }
-        }}
-      >
-        {Object.keys(tuningPresets).map((name) => (
-          <option key={name} value={name}>{name}</option>
-        ))}
-        <option value="Custom">Custom</option>
-      </select>
+      <label className="export-label" htmlFor="at-bars">
+        Bars per row ({settings.display.barsPerRow < 1 ? 'auto' : settings.display.barsPerRow})
+      </label>
+      <input
+        id="at-bars"
+        type="range"
+        min={-1}
+        max={8}
+        value={settings.display.barsPerRow}
+        onChange={(e) => setDisplay('barsPerRow', Number(e.target.value))}
+        className="tab-range"
+      />
 
-      <label className="export-label">Custom tuning (high→low)</label>
-      <div className="tab-tuning-grid">
-        {tuning.map((note, idx) => (
-          <input
-            key={idx}
-            className="tab-tuning-input"
-            type="text"
-            value={note}
-            aria-label={`AlphaTab string ${idx + 1}`}
-            onChange={(event) => {
-              const next = [...tuning];
-              next[idx] = event.target.value;
-              onTuningPresetChange('Custom');
-              onTuningChange(next);
-            }}
-          />
-        ))}
-      </div>
-
-      {partOptions.length > 1 && (
+      {parts.length > 1 && (
         <>
-          <label className="export-label" htmlFor="alphatab-part">Part</label>
-          <select id="alphatab-part" value={partIndex} onChange={(event) => onPartIndexChange(Number(event.target.value))}>
-            {partOptions.map((name, idx) => (
-              <option key={`${name}-${idx}`} value={idx}>{name}</option>
+          <label className="export-label" htmlFor="at-part">Part / instrument</label>
+          <select
+            id="at-part"
+            value={settings.partIndex}
+            onChange={(e) => set('partIndex', Number(e.target.value))}
+          >
+            {parts.map((p, i) => (
+              <option key={p.id} value={i}>{p.name}</option>
             ))}
           </select>
         </>
       )}
-
-      <h2>Export AlphaTab</h2>
-      <div className="export-actions">
-        <button type="button" onClick={onExportSvg} disabled={!canExport}>Export AlphaTab SVG</button>
-        <button type="button" onClick={() => void onExportPng()} disabled={!canExport}>Export AlphaTab PNG</button>
-        <button type="button" onClick={() => void onExportPdf()} disabled={!canExport}>Generate AlphaTab PDF</button>
-      </div>
     </>
   );
 }
