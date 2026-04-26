@@ -26,8 +26,6 @@ import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
 import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
-import AlphaTabRenderer from './renderers/AlphaTabRenderer';
-import AlphaTabControls from './components/AlphaTabControls';
 import {
   extractRehearsalMarkTexts,
   repositionRehearsalMarksBetweenSystems,
