@@ -12,6 +12,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@coderline/alphatab": "^1.8.2",
+    "@coderline/alphatab-vite": "^1.8.2",
     "jspdf": "^2.5.2",
     "jszip": "^3.10.1",
     "opensheetmusicdisplay": "^1.8.9",

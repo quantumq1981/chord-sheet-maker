@@ -345,6 +345,19 @@ select:disabled {
   cursor: pointer;
 }
 
+.mode-badge--alphatab {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.mode-badge--alphatab-toggle {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+  cursor: pointer;
+}
+
 /* ── Tab container (VexFlow render target) ──────────────────────────────── */
 
 .tab-container {
@@ -708,4 +721,135 @@ select:disabled {
 .omr-stage-list li.active {
   font-weight: 700;
   color: #1d4ed8;
+}
+
+/* ── AlphaTab renderer ───────────────────────────────────────────────────── */
+
+.alphatab-viewport {
+  /* AlphaTab renders into its container — give it enough room. */
+  padding: 0;
+  overflow: auto;
+}
+
+.alphatab-wrapper {
+  position: relative;
+  width: 100%;
+  min-height: 70vh;
+}
+
+.alphatab-loading {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: #475569;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.alphatab-error {
+  padding: 0.75rem 1rem;
+  margin: 0.75rem;
+  border: 1px solid #dc2626;
+  border-radius: 0.5rem;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 0.875rem;
+}
+
+/* AlphaTab injects its own container element — ensure it fills width. */
+.alphatab-container {
+  width: 100%;
+  min-height: 70vh;
+}
+
+/* ── Fretboard positions panel ──────────────────────────────────────────── */
+
+.fretboard-panel {
+  margin-top: 1rem;
+}
+
+.fretboard-hint {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin: 0 0 0.5rem;
+}
+
+.fretboard-note-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.75rem;
+}
+
+.fretboard-note-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  background: #f8fafc;
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  min-width: 2.8rem;
+}
+
+.fretboard-note-btn.active {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.fretboard-note-btn .note-name {
+  font-weight: 700;
+}
+
+.fretboard-note-btn .note-pos-count {
+  font-size: 0.65rem;
+  opacity: 0.75;
+}
+
+.fretboard-selected-heading {
+  margin: 0.5rem 0 0.4rem;
+  font-size: 0.9rem;
+}
+
+.fretboard-pos-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.fretboard-pos-table th,
+.fretboard-pos-table td {
+  border: 1px solid #e2e8f0;
+  padding: 0.25rem 0.4rem;
+  text-align: left;
+}
+
+.fretboard-pos-table th {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+.fretboard-svg {
+  display: block;
+  width: 100%;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.4rem;
+  background: #fafafa;
+  overflow: visible;
+}
+
+.at-panel-empty {
+  color: #64748b;
+  font-size: 0.85rem;
 }

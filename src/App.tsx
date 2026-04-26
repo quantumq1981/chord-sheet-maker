@@ -10,7 +10,11 @@ import {
   type ConverterDiagnostics,
   type RepeatStrategy,
 } from './converters/musicXMLtochordpro';
-import { musicXMLToVexTabScore, type VexTabScore } from './converters/musicXMLtoVexFlow';
+import { musicXMLToVexTabScore, getScoreNotePositions, type VexTabScore, type NotePositionMap } from './converters/musicXMLtoVexFlow';
+import AlphaTabRenderer from './renderers/AlphaTabRenderer';
+import AlphaTabControls from './components/AlphaTabControls';
+import FretboardPositionsPanel from './components/FretboardPositionsPanel';
+import type { AlphaTabUiSettings } from './types/alphatab';
 import {
   sniffFormatFromBytes,
   isMusicXmlFormat,
@@ -50,7 +54,7 @@ import { loadMusicXmlFromString } from './utils/loadMusicXmlFromString';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AppMode = 'empty' | 'notation' | 'chord-chart' | 'tablature';
+type AppMode = 'empty' | 'notation' | 'chord-chart' | 'tablature' | 'alphatab';
 
 type Diagnostics = {
   isValidXml: boolean;
@@ -714,6 +718,15 @@ export default function App() {
   const [tabRenderError, setTabRenderError] = useState('');
   const [tabScoreData, setTabScoreData] = useState<VexTabScore | null>(null);
 
+  // ── AlphaTab mode state ──
+  const [alphaTabSettings, setAlphaTabSettings] = useState<AlphaTabUiSettings>({
+    display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1 },
+    enablePlayer: false,
+    partIndex: 0,
+  });
+  const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
+  const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
+
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
     if (!loadedXmlText) return null;
@@ -743,6 +756,17 @@ export default function App() {
 
   // Sync computed score into state so the renderer gets it reactively
   useEffect(() => { setTabScoreData(tabScore); }, [tabScore]);
+
+  // ── AlphaTab: all-positions note map ──
+  // Recomputes when XML, tuning, or part changes (same inputs as tabScore).
+  const alphaTabNotePositionsComputed = useMemo<NotePositionMap[]>(() => {
+    if (!loadedXmlText || !diagnostics?.isMusicXml) return [];
+    return getScoreNotePositions(loadedXmlText, tabTuning, alphaTabSettings.partIndex);
+  }, [loadedXmlText, tabTuning, alphaTabSettings.partIndex, diagnostics?.isMusicXml]);
+
+  useEffect(() => {
+    setAlphaTabNotePositions(alphaTabNotePositionsComputed);
+  }, [alphaTabNotePositionsComputed]);
 
   useEffect(() => {
     if (!pristineXmlText) return;
@@ -1588,7 +1612,7 @@ export default function App() {
           </span>
         )}
 
-        {(appMode === 'notation' || appMode === 'tablature') && (
+        {(appMode === 'notation' || appMode === 'tablature' || appMode === 'alphatab') && (
           <>
             {appMode === 'notation' ? (
               <>
@@ -1603,8 +1627,15 @@ export default function App() {
                 >
                   Tab View
                 </button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--alphatab-toggle"
+                  onClick={() => setAppMode('alphatab')}
+                >
+                  AlphaTab View
+                </button>
               </>
-            ) : (
+            ) : appMode === 'tablature' ? (
               <>
                 <span className="mode-badge mode-badge--tablature">Tab View</span>
                 <button
@@ -1613,6 +1644,31 @@ export default function App() {
                   onClick={() => setAppMode('notation')}
                 >
                   Notation
+                </button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--alphatab-toggle"
+                  onClick={() => setAppMode('alphatab')}
+                >
+                  AlphaTab View
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="mode-badge mode-badge--alphatab">AlphaTab</span>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('notation')}
+                >
+                  Notation
+                </button>
+                <button
+                  type="button"
+                  className="mode-badge mode-badge--tab-toggle"
+                  onClick={() => setAppMode('tablature')}
+                >
+                  Tab View
                 </button>
               </>
             )}
@@ -1702,6 +1758,25 @@ export default function App() {
                 fontSize={tabFontSize}
                 measuresPerRow={tabMeasuresPerRow}
                 onRenderError={(e) => setTabRenderError(e)}
+              />
+            )}
+          </section>
+        ) : appMode === 'alphatab' ? (
+          <section
+            className={`score-viewport alphatab-viewport ${isDragging ? 'dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={onDrop}
+          >
+            {alphaTabRenderError && (
+              <div className="error-banner">AlphaTab error: {alphaTabRenderError}</div>
+            )}
+            {loadedXmlText && (
+              <AlphaTabRenderer
+                key={`at-${loadedXmlText.slice(0, 40)}`}
+                xmlText={loadedXmlText}
+                uiSettings={alphaTabSettings}
+                onError={(e) => setAlphaTabRenderError(e)}
               />
             )}
           </section>
@@ -2222,6 +2297,21 @@ export default function App() {
                   </div>
                 </div>
               )}
+            </>
+          )}
+
+          {/* ── AlphaTab mode panel ── */}
+          {appMode === 'alphatab' && loadedXmlText && (
+            <>
+              <AlphaTabControls
+                settings={alphaTabSettings}
+                parts={tabScoreData?.parts ?? []}
+                onSettingsChange={setAlphaTabSettings}
+              />
+              <FretboardPositionsPanel
+                notePositions={alphaTabNotePositions}
+                stringCount={tabTuning.length}
+              />
             </>
           )}
 
