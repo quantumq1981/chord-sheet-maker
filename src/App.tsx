@@ -728,6 +728,7 @@ export default function App() {
   });
   const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
   const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
+  const [alphaTabFullscreen, setAlphaTabFullscreen] = useState(false);
 
   // ── Guitar Pro file state ──
   const [gpFileBuffer, setGpFileBuffer] = useState<ArrayBuffer | null>(null);
@@ -1815,6 +1816,9 @@ export default function App() {
                 </span>
                 <button type="button" onClick={() => adjustAlphaTabZoom(-0.1)}>Zoom −</button>
                 <button type="button" onClick={() => adjustAlphaTabZoom(0.1)}>Zoom +</button>
+                <button type="button" onClick={() => setAlphaTabFullscreen((f) => !f)}>
+                  {alphaTabFullscreen ? 'Exit Full' : 'Full Screen'}
+                </button>
                 {/* Notation / Tab View switches are only meaningful for MusicXML files */}
                 {!gpFileBuffer && (
                   <>
@@ -1927,11 +1931,21 @@ export default function App() {
           </section>
         ) : appMode === 'alphatab' ? (
           <section
-            className={`score-viewport alphatab-viewport ${isDragging ? 'dragging' : ''}`}
+            className={`score-viewport alphatab-viewport${alphaTabFullscreen ? ' alphatab-viewport--fullscreen' : ''} ${isDragging ? 'dragging' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
           >
+            {alphaTabFullscreen && (
+              <button
+                type="button"
+                className="alphatab-fullscreen-close"
+                onClick={() => setAlphaTabFullscreen(false)}
+                aria-label="Exit full screen"
+              >
+                ✕
+              </button>
+            )}
             {alphaTabRenderError && (
               <div className="error-banner">AlphaTab error: {alphaTabRenderError}</div>
             )}

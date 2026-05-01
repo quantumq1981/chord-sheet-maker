@@ -761,6 +761,39 @@ select:disabled {
   overflow: auto;
 }
 
+/* Full-screen overlay: covers the entire viewport, score scrolls inside. */
+.alphatab-viewport--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  height: auto !important;
+  max-height: none !important;
+  border-radius: 0;
+  border: none;
+  /* Respect iOS notch / home indicator */
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0)
+           env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+}
+
+.alphatab-fullscreen-close {
+  position: sticky;
+  top: 0.5rem;
+  left: calc(100% - 3rem);
+  z-index: 10;
+  display: block;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  margin-left: auto;
+  margin-bottom: -2.25rem; /* float above the score without pushing content down */
+}
+
 .alphatab-wrapper {
   position: relative;
   width: 100%;
