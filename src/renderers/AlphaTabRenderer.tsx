@@ -16,6 +16,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { AlphaTabUiSettings } from '../types/alphatab';
 
+// Detect iOS/iPadOS. Module Web Workers hang silently on iOS Safari, so we
+// disable workers there and render synchronously on the main thread instead.
+function isIOS(): boolean {
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    // iPadOS 13+ reports as MacIntel but has touch points
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
 interface Props {
   /** MusicXML text — used when fileBytes is not provided. */
   xmlText?: string;
@@ -55,10 +65,10 @@ export default function AlphaTabRenderer({
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
     (s.core as unknown as Record<string, unknown>).workerFile = workerUrl;
-    // iOS Safari's Web Worker bootstrap silently hangs (module worker support
-    // is unreliable). Disabling workers makes AlphaTab render synchronously on
-    // the main thread, which works correctly on all platforms.
-    s.core.useWorkers = false;
+    // iOS Safari silently hangs on module Web Workers. Disable workers only on
+    // iOS so rendering runs synchronously there. All other platforms keep workers
+    // enabled so the main thread stays unblocked during large-file rendering.
+    s.core.useWorkers = !isIOS();
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
@@ -100,20 +110,28 @@ export default function AlphaTabRenderer({
     if (!containerRef.current) return;
     if (apiRef.current) return;
 
+    const ios = isIOS();
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-    // useWorkers = false → API is synchronously ready; no bootstrap renderFinished fires.
-    // The data-change effect below will call loadData once readyRef is true.
-    readyRef.current = true;
 
     api.renderStarted.on(() => setStatus('loading'));
 
-    let apiReadyNotified = false;
+    let notifiedReady = false;
     api.renderFinished.on(() => {
       setStatus('ready');
-      if (!apiReadyNotified) {
-        apiReadyNotified = true;
+      if (!readyRef.current) {
+        // Bootstrap renderFinished (workers path): API is now ready.
+        readyRef.current = true;
+        if (pendingDataRef.current) {
+          const d = pendingDataRef.current;
+          pendingDataRef.current = null;
+          loadData(api, d, uiSettings.partIndex);
+        }
+        return;
+      }
+      if (!notifiedReady) {
+        notifiedReady = true;
         onApiReady?.(api);
       }
     });
@@ -125,6 +143,14 @@ export default function AlphaTabRenderer({
         setErrorMsg(msg);
         onError?.(msg);
       });
+
+    if (ios) {
+      // No worker bootstrap — API ready immediately; data-change effect calls loadData.
+      readyRef.current = true;
+    } else {
+      // With workers — bootstrap renderFinished will signal readiness and call loadData.
+      pendingDataRef.current = fileData || null;
+    }
 
     return () => {
       apiRef.current?.destroy();
@@ -178,16 +204,26 @@ export default function AlphaTabRenderer({
     readyRef.current = false;
     setStatus('loading');
 
+    const ios = isIOS();
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-    readyRef.current = true;
 
-    let apiReadyNotified2 = false;
+    let notifiedReady2 = false;
     api.renderFinished.on(() => {
       setStatus('ready');
-      if (!apiReadyNotified2) {
-        apiReadyNotified2 = true;
+      if (!readyRef.current) {
+        // Bootstrap (workers path): API ready, load pending data.
+        readyRef.current = true;
+        if (pendingDataRef.current) {
+          const d = pendingDataRef.current;
+          pendingDataRef.current = null;
+          loadData(api, d, uiSettings.partIndex);
+        }
+        return;
+      }
+      if (!notifiedReady2) {
+        notifiedReady2 = true;
         onApiReady?.(api);
       }
     });
@@ -200,9 +236,13 @@ export default function AlphaTabRenderer({
         onError?.(msg);
       });
 
-    // Load immediately — no bootstrap event to wait for.
-    if (fileData) {
-      loadData(api, fileData, uiSettings.partIndex);
+    if (ios) {
+      // No worker bootstrap — load immediately.
+      readyRef.current = true;
+      if (fileData) loadData(api, fileData, uiSettings.partIndex);
+    } else {
+      // With workers — bootstrap renderFinished will load the score.
+      pendingDataRef.current = fileData || null;
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
       fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
