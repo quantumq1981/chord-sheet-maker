@@ -85,8 +85,8 @@ export default function AlphaTabRenderer({
       // silently fall back to notation-only so the score still renders.
       const trackIdx = partIdx >= 0 && partIdx < score.tracks.length ? partIdx : 0;
       const track = score.tracks[trackIdx];
-      const hasTabData = track?.staves.some(
-        (s: alphaTab.model.Staff) => s.stringTuning.tunings.length > 0,
+      const hasTabData = track?.staves?.some(
+        (s: alphaTab.model.Staff) => (s.stringTuning?.tunings?.length ?? 0) > 0,
       );
       if (!hasTabData) {
         const disp = api.settings.display as alphaTab.DisplaySettings;
