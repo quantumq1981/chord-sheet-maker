@@ -56,7 +56,9 @@ function detectGuitarPro(bytes: Uint8Array, ext: string): { format: 'guitarpro';
   if (bytes.length >= 5) {
     const len = bytes[0];
     if (len >= 5 && len <= 35 && bytes.length > len) {
-      const header = new TextDecoder('latin-1').decode(bytes.slice(1, len + 1));
+      // 'latin-1' is not a valid WHATWG encoding label in iOS Safari — use
+      // 'utf-8' instead. The GP header is pure ASCII, a UTF-8 subset.
+      const header = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(1, len + 1));
       if (header.startsWith('FICHIER GUITAR PRO v')) {
         return { format: 'guitarpro', version: header.slice('FICHIER GUITAR PRO v'.length) };
       }

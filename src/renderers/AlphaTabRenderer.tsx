@@ -4,12 +4,12 @@
 // Accepts either a MusicXML string (xmlText) or raw binary file bytes
 // (fileBytes) for Guitar Pro 3/4/5/X files — ScoreLoader auto-detects format.
 //
-// Blank-screen root causes (and fixes applied here):
-//   1. Container has no height → fixed by enforcing min-height via CSS class.
-//   2. fontDirectory points nowhere → fixed by computing absolute URL from
-//      document.baseURI so it works in dev and GitHub Pages production.
-//   3. Worker URL unresolved → static asset served from public/.
-//   4. renderScore called before API ready → called only inside renderFinished.
+// useWorkers=false: AlphaTab renders synchronously on the main thread.
+// Workers are unreliable in this Vite setup (the auto-detected scriptFile URL
+// for the bundled chunk may fail as a module worker), so we disable them.
+// iOS defaults to tab-only stave + 0.75 scale to reduce sync render time.
+// readyRef is set immediately after API creation — AlphaTab is synchronously
+// ready when useWorkers=false, so calling renderScore right away is safe.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -48,12 +48,14 @@ export default function AlphaTabRenderer({
 
   const baseUrl = new URL('./', document.baseURI).href;
   const fontDir = `${baseUrl}font/`;
-  const workerUrl = `${baseUrl}alphaTab.worker.min.mjs`;
 
   const buildSettings = useCallback((): alphaTab.Settings => {
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
-    (s.core as unknown as Record<string, unknown>).workerFile = workerUrl;
+    // useWorkers=false: synchronous rendering on main thread. Workers require
+    // AlphaTab to load its own bundled chunk as a module worker, which fails
+    // silently in our Vite setup and leaves the page stuck on "Rendering score".
+    s.core.useWorkers = false;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
@@ -70,7 +72,7 @@ export default function AlphaTabRenderer({
     }
     (s.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
     return s;
-  }, [fontDir, workerUrl, uiSettings]);
+  }, [fontDir, uiSettings]);
 
   const loadData = useCallback((api: alphaTab.AlphaTabApi, data: string | Uint8Array, partIdx: number) => {
     try {
@@ -98,10 +100,19 @@ export default function AlphaTabRenderer({
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-    readyRef.current = false;
+    // useWorkers=false → synchronously ready right after construction.
+    readyRef.current = true;
 
     api.renderStarted.on(() => setStatus('loading'));
-    api.renderFinished.on(() => setStatus('ready'));
+
+    let notifiedReady = false;
+    api.renderFinished.on(() => {
+      setStatus('ready');
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onApiReady?.(api);
+      }
+    });
 
     (api as unknown as { error: { on: (fn: (e: { message?: string }) => void) => void } })
       .error.on((e) => {
@@ -110,19 +121,6 @@ export default function AlphaTabRenderer({
         setErrorMsg(msg);
         onError?.(msg);
       });
-
-    api.renderFinished.on(() => {
-      if (!readyRef.current) {
-        readyRef.current = true;
-        onApiReady?.(api);
-        if (pendingDataRef.current) {
-          loadData(api, pendingDataRef.current, uiSettings.partIndex);
-          pendingDataRef.current = null;
-        }
-      }
-    });
-
-    pendingDataRef.current = fileData || null;
 
     return () => {
       apiRef.current?.destroy();
@@ -135,11 +133,7 @@ export default function AlphaTabRenderer({
   // Re-load when file data or partIndex changes.
   useEffect(() => {
     if (!fileData) return;
-    if (!apiRef.current) {
-      pendingDataRef.current = fileData;
-      return;
-    }
-    if (!readyRef.current) {
+    if (!apiRef.current || !readyRef.current) {
       pendingDataRef.current = fileData;
       return;
     }
@@ -174,21 +168,19 @@ export default function AlphaTabRenderer({
     apiRef.current.destroy();
     apiRef.current = null;
     readyRef.current = false;
-    pendingDataRef.current = fileData || null;
     setStatus('loading');
 
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
+    readyRef.current = true;
 
+    let notifiedReady2 = false;
     api.renderFinished.on(() => {
-      if (!readyRef.current) {
-        readyRef.current = true;
+      setStatus('ready');
+      if (!notifiedReady2) {
+        notifiedReady2 = true;
         onApiReady?.(api);
-        if (pendingDataRef.current) {
-          loadData(api, pendingDataRef.current, uiSettings.partIndex);
-          pendingDataRef.current = null;
-        }
       }
     });
 
@@ -199,6 +191,10 @@ export default function AlphaTabRenderer({
         setErrorMsg(msg);
         onError?.(msg);
       });
+
+    if (fileData) {
+      loadData(api, fileData, uiSettings.partIndex);
+    }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
       fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
 

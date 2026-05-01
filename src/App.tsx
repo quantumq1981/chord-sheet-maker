@@ -58,6 +58,7 @@ import type {
   OmrSummary,
 } from './types/omr';
 import { loadMusicXmlFromString } from './utils/loadMusicXmlFromString';
+import { DEFAULT_STAVE_PROFILE, DEFAULT_SCALE } from './utils/platform';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -721,7 +722,7 @@ export default function App() {
 
   // ── AlphaTab mode state ──
   const [alphaTabSettings, setAlphaTabSettings] = useState<AlphaTabUiSettings>({
-    display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
+    display: { staveProfile: DEFAULT_STAVE_PROFILE, layoutMode: 'page', barsPerRow: -1, scale: DEFAULT_SCALE },
     enablePlayer: false,
     partIndex: 0,
   });
@@ -995,7 +996,7 @@ export default function App() {
     setAlphaTabRenderError('');
     setAlphaTabNotePositions([]);
     setAlphaTabSettings({
-      display: { staveProfile: 'scoreTab', layoutMode: 'page', barsPerRow: -1, scale: 1 },
+      display: { staveProfile: DEFAULT_STAVE_PROFILE, layoutMode: 'page', barsPerRow: -1, scale: DEFAULT_SCALE },
       enablePlayer: false,
       partIndex: 0,
     });
