@@ -4,14 +4,12 @@
 // Accepts either a MusicXML string (xmlText) or raw binary file bytes
 // (fileBytes) for Guitar Pro 3/4/5/X files — ScoreLoader auto-detects format.
 //
-// Key design notes:
-//   - AlphaTab does NOT fire renderFinished during worker bootstrap — only after
-//     renderScore() is called. So readyRef is set immediately after API creation
-//     and the data-change effect drives the initial load.
-//   - Worker URL is NOT set manually. AlphaTab auto-detects its own bundle URL
-//     via import.meta.url and spawns a module worker from it. Setting a custom
-//     workerFile (not a real AlphaTab property) was silently ignored; setting
-//     scriptFile incorrectly breaks the auto-detection.
+// useWorkers=false: AlphaTab renders synchronously on the main thread.
+// Workers are unreliable in this Vite setup (the auto-detected scriptFile URL
+// for the bundled chunk may fail as a module worker), so we disable them.
+// iOS defaults to tab-only stave + 0.75 scale to reduce sync render time.
+// readyRef is set immediately after API creation — AlphaTab is synchronously
+// ready when useWorkers=false, so calling renderScore right away is safe.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -54,10 +52,10 @@ export default function AlphaTabRenderer({
   const buildSettings = useCallback((): alphaTab.Settings => {
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
-    // Do NOT set scriptFile — AlphaTab auto-detects it via import.meta.url
-    // (resolves to the bundled alphaTab chunk URL). Setting it incorrectly
-    // causes worker launch to fail. workerFile is not a valid AlphaTab property.
-    s.core.useWorkers = true;
+    // useWorkers=false: synchronous rendering on main thread. Workers require
+    // AlphaTab to load its own bundled chunk as a module worker, which fails
+    // silently in our Vite setup and leaves the page stuck on "Rendering score".
+    s.core.useWorkers = false;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
@@ -102,8 +100,7 @@ export default function AlphaTabRenderer({
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-    // AlphaTab queues renderScore calls until its worker is ready, so we can
-    // mark the API as ready immediately and let the data-change effect load.
+    // useWorkers=false → synchronously ready right after construction.
     readyRef.current = true;
 
     api.renderStarted.on(() => setStatus('loading'));
