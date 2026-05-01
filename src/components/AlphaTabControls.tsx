@@ -64,6 +64,7 @@ export default function AlphaTabControls({ settings, parts, onSettingsChange }: 
           value={localScale}
           onChange={(e) => setLocalScale(Number(e.target.value))}
           onPointerUp={(e) => setDisplay('scale', Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={() => setDisplay('scale', localScale)}
           onKeyUp={() => setDisplay('scale', localScale)}
           className="tab-range"
         />
