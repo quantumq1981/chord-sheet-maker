@@ -102,19 +102,11 @@ type ChordProUiState = {
 };
 
 // ─── File-accept string ───────────────────────────────────────────────────────
-
-const FILE_INPUT_ACCEPT = [
-  // MusicXML / MXL
-  '.xml', '.musicxml', '.mxl',
-  'application/vnd.recordare.musicxml+xml',
-  'application/xml', 'text/xml', 'application/zip',
-  // Guitar Pro
-  '.gp', '.gp3', '.gp4', '.gp5', '.gpx', '.gp6', '.gp7',
-  // ChordPro dialects
-  '.cho', '.chopro', '.chord', '.crd', '.pro',
-  // Generic text (UG-style, chords-over-words)
-  '.txt',
-].join(',');
+// Use "*" (no filter) so iOS shows all file types in the picker.
+// Guitar Pro files have no registered MIME type / UTI, so iOS greys them out
+// when a strict accept list is used. Our sniffFormat handles bad types with an
+// error message, so it is safe to accept everything here.
+const FILE_INPUT_ACCEPT = '*';
 
 
 const OMR_FILE_INPUT_ACCEPT = ['.pdf', '.png', '.jpg', '.jpeg', 'application/pdf', 'image/png', 'image/jpeg'].join(',');
