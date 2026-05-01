@@ -79,6 +79,22 @@ export default function AlphaTabRenderer({
       const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
       const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, api.settings);
       onScoreLoadedRef.current?.(score);
+
+      // If the file has no guitar string data (e.g. piano MusicXML), AlphaTab will
+      // crash with "l.staves" when trying to lay out a tab stave. Detect this and
+      // silently fall back to notation-only so the score still renders.
+      const trackIdx = partIdx >= 0 && partIdx < score.tracks.length ? partIdx : 0;
+      const track = score.tracks[trackIdx];
+      const hasTabData = track?.staves.some(
+        (s: alphaTab.model.Staff) => s.stringTuning.tunings.length > 0,
+      );
+      if (!hasTabData) {
+        const disp = api.settings.display as alphaTab.DisplaySettings;
+        if (disp.staveProfile !== alphaTab.StaveProfile.Score) {
+          disp.staveProfile = alphaTab.StaveProfile.Score;
+        }
+      }
+
       const tracks = partIdx >= 0 && partIdx < score.tracks.length ? [partIdx] : undefined;
       api.renderScore(score, tracks);
     } catch (e: unknown) {
