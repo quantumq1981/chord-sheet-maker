@@ -13,5 +13,5 @@ export function isIOS(): boolean {
 /** Default AlphaTab stave profile: tab-only on iOS (faster), scoreTab elsewhere. */
 export const DEFAULT_STAVE_PROFILE = isIOS() ? 'tab' : 'scoreTab';
 
-/** Default AlphaTab scale: 0.75 on iOS to reduce SVG element count, 1.0 elsewhere. */
-export const DEFAULT_SCALE = isIOS() ? 0.75 : 1;
+/** Default AlphaTab scale: 0.75 on all platforms to keep initial SVG element count manageable. */
+export const DEFAULT_SCALE = 0.75;
