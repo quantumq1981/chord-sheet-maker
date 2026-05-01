@@ -15,12 +15,19 @@ import AlphaTabRenderer from './renderers/AlphaTabRenderer';
 import AlphaTabControls from './components/AlphaTabControls';
 import FretboardPositionsPanel from './components/FretboardPositionsPanel';
 import type { AlphaTabUiSettings } from './types/alphatab';
+import type * as alphaTabNS from '@coderline/alphatab';
 import {
   sniffFormatFromBytes,
   isMusicXmlFormat,
   isChordChartFormat,
+  isGuitarProFormat,
   asSourceFormat,
 } from './ingest/sniffFormat';
+import {
+  gpScoreToChordPro,
+  gpScoreTrackNames,
+  gpScoreNotePositions,
+} from './converters/guitarProConverter';
 import { transposeMusicXML } from './converters/transposeMusicXML';
 import { parseChordChart } from './parsers/chordProParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
@@ -101,6 +108,8 @@ const FILE_INPUT_ACCEPT = [
   '.xml', '.musicxml', '.mxl',
   'application/vnd.recordare.musicxml+xml',
   'application/xml', 'text/xml', 'application/zip',
+  // Guitar Pro
+  '.gp', '.gp3', '.gp4', '.gp5', '.gpx', '.gp6', '.gp7',
   // ChordPro dialects
   '.cho', '.chopro', '.chord', '.crd', '.pro',
   // Generic text (UG-style, chords-over-words)
@@ -727,6 +736,13 @@ export default function App() {
   const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
   const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
 
+  // ── Guitar Pro file state ──
+  const [gpFileBuffer, setGpFileBuffer] = useState<ArrayBuffer | null>(null);
+  const [gpVersion, setGpVersion] = useState('');         // e.g. "4.06", "3.00"
+  const [gpTracks, setGpTracks] = useState<string[]>([]);
+  const [gpChordProText, setGpChordProText] = useState('');
+  const [gpChordProWarnings, setGpChordProWarnings] = useState<string[]>([]);
+
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
     if (!loadedXmlText) return null;
@@ -758,11 +774,13 @@ export default function App() {
   useEffect(() => { setTabScoreData(tabScore); }, [tabScore]);
 
   // ── AlphaTab: all-positions note map ──
-  // Recomputes when XML, tuning, or part changes (same inputs as tabScore).
+  // For MusicXML: computed via heuristic fret-assignment from the XML.
+  // For GP files: populated by onScoreLoaded callback (exact positions from file).
   const alphaTabNotePositionsComputed = useMemo<NotePositionMap[]>(() => {
+    if (gpFileBuffer) return []; // GP positions come from onScoreLoaded
     if (!loadedXmlText || !diagnostics?.isMusicXml) return [];
     return getScoreNotePositions(loadedXmlText, tabTuning, alphaTabSettings.partIndex);
-  }, [loadedXmlText, tabTuning, alphaTabSettings.partIndex, diagnostics?.isMusicXml]);
+  }, [gpFileBuffer, loadedXmlText, tabTuning, alphaTabSettings.partIndex, diagnostics?.isMusicXml]);
 
   useEffect(() => {
     setAlphaTabNotePositions(alphaTabNotePositionsComputed);
@@ -989,6 +1007,12 @@ export default function App() {
       enablePlayer: false,
       partIndex: 0,
     });
+    // Guitar Pro
+    setGpFileBuffer(null);
+    setGpVersion('');
+    setGpTracks([]);
+    setGpChordProText('');
+    setGpChordProWarnings([]);
     // OMR
     resetOmrState();
   }, [resetOmrState]);
@@ -1021,7 +1045,45 @@ export default function App() {
         setTransposeWarnings([]);
         setChartChordProText('');
         setChartChordProWarnings([]);
+        setGpFileBuffer(null);
+        setGpVersion('');
+        setGpTracks([]);
+        setGpChordProText('');
+        setGpChordProWarnings([]);
         setAppMode('notation');
+
+      } else if (isGuitarProFormat(detected)) {
+        // ── Guitar Pro path ──
+        setLoadedFilename(file.name);
+        setGpFileBuffer(arrayBuffer);
+        setGpVersion(detected.version);
+        setGpTracks([]);          // populated by onScoreLoaded after AlphaTab parses
+        setGpChordProText('');
+        setGpChordProWarnings([]);
+        setAlphaTabRenderError('');
+        setAlphaTabNotePositions([]);
+        setAlphaTabSettings(prev => ({ ...prev, partIndex: 0 }));
+        setRenderError('');
+        setExportFeedback(null);
+        // Clear MusicXML + chord-chart state
+        setLoadedXmlText('');
+        setPristineXmlText('');
+        setIsMxl(false);
+        setRenderedPageCount(0);
+        setPdfBlobUrl(null);
+        setChordProText('');
+        setChordProWarnings([]);
+        setChordProDiagnostics(null);
+        setCsmpnFakeBookText('');
+        setCsmpnWarnings([]);
+        setChartDocument(null);
+        setTransposeWarnings([]);
+        setChartChordProText('');
+        setChartChordProWarnings([]);
+        setDetectedFormatLabel(`Guitar Pro ${detected.version}`);
+        if (containerRef.current) containerRef.current.innerHTML = '';
+        xmlLoadedRef.current = '';
+        setAppMode('alphatab');
 
       } else if (isChordChartFormat(detected)) {
         // ── Chord-chart path ──
@@ -1061,8 +1123,9 @@ export default function App() {
 
       } else {
         setRenderError(
-          'Unsupported file type. Upload .xml, .musicxml, .mxl (notation) ' +
-          'or .cho, .chopro, .crd, .pro, .txt (chord chart).'
+          'Unsupported file type. Upload .xml / .musicxml / .mxl (notation), ' +
+          '.gp / .gp3 / .gp4 / .gp5 / .gpx (Guitar Pro), ' +
+          'or .cho / .chopro / .crd / .pro / .txt (chord chart).'
         );
       }
     } catch (error) {
@@ -1667,11 +1730,24 @@ export default function App() {
     return transposeKeyDisplayFromXml(pristineXmlText, transposeSemitones, transposeEnharmonic);
   }, [appMode, chartDocument?.key, pristineXmlText, transposeSemitones, transposeEnharmonic]);
 
+  // ── Guitar Pro: score loaded callback ──
+  // Called by AlphaTabRenderer after ScoreLoader parses the GP file.
+  const handleGpScoreLoaded = useCallback((score: alphaTabNS.model.Score) => {
+    const names = gpScoreTrackNames(score);
+    setGpTracks(names);
+    const partIdx = alphaTabSettings.partIndex;
+    const { text, warnings } = gpScoreToChordPro(score, partIdx);
+    setGpChordProText(text);
+    setGpChordProWarnings(warnings);
+    const positions = gpScoreNotePositions(score, partIdx);
+    setAlphaTabNotePositions(positions);
+  }, [alphaTabSettings.partIndex]);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const canExportNotation = appMode === 'notation' && Boolean(loadedXmlText);
   const canExportTab = appMode === 'tablature' && Boolean(tabScoreData?.measures.length);
-  const canExportAlphaTab = appMode === 'alphatab' && Boolean(loadedXmlText);
+  const canExportAlphaTab = appMode === 'alphatab' && Boolean(loadedXmlText || gpFileBuffer);
 
   return (
     <div className="app-shell">
@@ -1684,7 +1760,7 @@ export default function App() {
 
         {appMode === 'empty' && (
           <span className="hint">
-            Drag &amp; drop .xml / .musicxml / .mxl (notation) or .cho / .pro / .txt (chord chart)
+            Drag &amp; drop .xml / .musicxml / .mxl, .gp3 / .gp4 / .gp5 / .gpx (Guitar Pro), or .cho / .pro / .txt
           </span>
         )}
 
@@ -1731,21 +1807,28 @@ export default function App() {
               </>
             ) : (
               <>
-                <span className="mode-badge mode-badge--alphatab">AlphaTab</span>
-                <button
-                  type="button"
-                  className="mode-badge mode-badge--tab-toggle"
-                  onClick={() => setAppMode('notation')}
-                >
-                  Notation
-                </button>
-                <button
-                  type="button"
-                  className="mode-badge mode-badge--tab-toggle"
-                  onClick={() => setAppMode('tablature')}
-                >
-                  Tab View
-                </button>
+                <span className="mode-badge mode-badge--alphatab">
+                  {gpFileBuffer ? `Guitar Pro ${gpVersion}` : 'AlphaTab'}
+                </span>
+                {/* Notation / Tab View switches are only meaningful for MusicXML files */}
+                {!gpFileBuffer && (
+                  <>
+                    <button
+                      type="button"
+                      className="mode-badge mode-badge--tab-toggle"
+                      onClick={() => setAppMode('notation')}
+                    >
+                      Notation
+                    </button>
+                    <button
+                      type="button"
+                      className="mode-badge mode-badge--tab-toggle"
+                      onClick={() => setAppMode('tablature')}
+                    >
+                      Tab View
+                    </button>
+                  </>
+                )}
               </>
             )}
           </>
@@ -1847,11 +1930,13 @@ export default function App() {
             {alphaTabRenderError && (
               <div className="error-banner">AlphaTab error: {alphaTabRenderError}</div>
             )}
-            {loadedXmlText && (
+            {(loadedXmlText || gpFileBuffer) && (
               <AlphaTabRenderer
-                key={`at-${loadedXmlText.slice(0, 40)}`}
-                xmlText={loadedXmlText}
+                key={gpFileBuffer ? `gp-${loadedFilename}` : `at-${loadedXmlText.slice(0, 40)}`}
+                xmlText={gpFileBuffer ? undefined : loadedXmlText}
+                fileBytes={gpFileBuffer ? new Uint8Array(gpFileBuffer) : undefined}
                 uiSettings={alphaTabSettings}
+                onScoreLoaded={gpFileBuffer ? handleGpScoreLoaded : undefined}
                 onError={(e) => setAlphaTabRenderError(e)}
               />
             )}
@@ -2377,13 +2462,43 @@ export default function App() {
           )}
 
           {/* ── AlphaTab mode panel ── */}
-          {appMode === 'alphatab' && loadedXmlText && (
+          {appMode === 'alphatab' && (loadedXmlText || gpFileBuffer) && (
             <>
               <AlphaTabControls
                 settings={alphaTabSettings}
-                parts={tabScoreData?.parts ?? []}
+                parts={
+                  gpFileBuffer
+                    ? gpTracks.map((name, i) => ({ id: String(i), name }))
+                    : (tabScoreData?.parts ?? [])
+                }
                 onSettingsChange={setAlphaTabSettings}
               />
+
+              {/* GP ChordPro extraction */}
+              {gpFileBuffer && gpChordProText && (
+                <>
+                  <h2>Extracted Chords</h2>
+                  {gpChordProWarnings.map((w, i) => (
+                    <p key={i} className="warning-block">{w}</p>
+                  ))}
+                  <textarea
+                    className="chordpro-output"
+                    readOnly
+                    value={gpChordProText}
+                    rows={10}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([gpChordProText], { type: 'text/plain' });
+                      const base = loadedFilename.replace(/\.[^.]+$/, '');
+                      triggerBlobDownload(blob, `${base}.cho`);
+                    }}
+                  >
+                    Download ChordPro
+                  </button>
+                </>
+              )}
 
               <h2>Export AlphaTab</h2>
               <div className="export-actions">
@@ -2400,7 +2515,13 @@ export default function App() {
 
               <FretboardPositionsPanel
                 notePositions={alphaTabNotePositions}
-                stringCount={tabTuning.length}
+                stringCount={
+                  gpFileBuffer
+                    ? (alphaTabNotePositions[0]?.positions.length
+                        ? Math.max(...alphaTabNotePositions.flatMap(n => n.positions.map(p => p.str)))
+                        : 6)
+                    : tabTuning.length
+                }
               />
             </>
           )}

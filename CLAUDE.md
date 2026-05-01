@@ -1,10 +1,10 @@
 # CLAUDE.md — chord-sheet-maker
 
-Last updated: 2026-04-19
+Last updated: 2026-05-01
 
 ## Project Role
 
-This repo is the **MusicXML normalizer / converter workbench**. It ingests structured notation formats (MusicXML, MXL, ChordPro, Ultimate Guitar, chords-over-words), renders scores in-browser via OpenSheetMusicDisplay (OSMD), and converts notation to ChordPro/CSMPN output. It is the safe place to develop and mature parsing/conversion logic before it feeds the Pro finishing app.
+This repo is the **MusicXML normalizer / converter workbench**. It ingests structured notation formats (MusicXML, MXL, Guitar Pro GP3/GP4/GP5/GPX, ChordPro, Ultimate Guitar, chords-over-words), renders scores in-browser via OpenSheetMusicDisplay (OSMD) and AlphaTab, and converts notation to ChordPro/CSMPN output. It is the safe place to develop and mature parsing/conversion logic before it feeds the Pro finishing app.
 
 ---
 
@@ -42,6 +42,7 @@ src/
 │   ├── transposeMusicXML.ts     Global semitone transposition for MusicXML pitch/key/harmony
 │   ├── chordSymbolParser.ts     Free-text chord inference (Finale-style direction/words)
 │   ├── xmlIntakeAnalyzer.ts     XML complexity analysis + reducibility scoring
+│   ├── guitarProConverter.ts    Guitar Pro → ChordPro + note position extraction from AlphaTab Score model
 │   └── __tests__/
 ├── parsers/
 │   ├── chordProParser.ts        ChordPro, UG, and chords-over-words parser
@@ -75,13 +76,22 @@ backend/
 
 ## App Modes
 
-The app has four top-level states (`AppMode`):
+The app has five top-level states (`AppMode`):
 
 - **`empty`** — no file loaded, shows upload drop zone
 - **`notation`** — MusicXML/MXL loaded, OSMD renders the score in SVG; full export panel available
 - **`chord-chart`** — text chord chart loaded (ChordPro/UG/COW); ChordChart component renders
 - **`tablature`** — MusicXML/MXL loaded, VexFlow renders guitar tab; accessible via "Tab View" button from notation mode
-- **`alphatab`** — MusicXML/MXL loaded, AlphaTab renders notation + tablature with page/horizontal layout options and dedicated exports
+- **`alphatab`** — MusicXML/MXL **or Guitar Pro (.gp3/.gp4/.gp5/.gpx)** loaded; AlphaTab renders notation + tablature with page/horizontal layout options and dedicated exports. Guitar Pro files go directly to this mode.
+
+### Guitar Pro sub-state (within `alphatab` mode)
+When a GP file is loaded, `gpFileBuffer: ArrayBuffer` is set and controls how `AlphaTabRenderer` is invoked:
+- Raw `Uint8Array` bytes are passed directly to `ScoreLoader.loadScoreFromBytes()` (AlphaTab auto-detects format)
+- `onScoreLoaded(score)` fires synchronously after parsing, before rendering
+- Track names are extracted via `gpScoreTrackNames(score)` and populate the track selector
+- ChordPro text is extracted via `gpScoreToChordPro(score, trackIndex)` from beat.text / beat.chordId annotations
+- Note positions (string, fret pairs) are extracted via `gpScoreNotePositions(score, trackIndex)` for the fretboard panel
+- Notation/Tab View mode switches are hidden (only AlphaTab renders GP files)
 
 ---
 
@@ -250,13 +260,17 @@ Supports three dialects, all normalize to `ChordChartDocument`:
 
 Order (first match wins):
 1. ZIP magic bytes → `mxl`
-2. XML prolog + `score-partwise`/`timewise` root → `musicxml`
-3. ChordPro directives regex → `chordpro`
-4. UG section headers → `ultimateguitar`
-5. Inline bracket chords → `chordpro`
-6. COW heuristic (≥70% chord tokens) → `chords-over-words`
-7. Extension fallback (.cho, .pro, .crd) → `chordpro`
-8. Default → `unknown`
+2. **Guitar Pro binary magic**: byte[0] = Pascal string length (5–35), bytes[1..len] starts with `"FICHIER GUITAR PRO v"` → `guitarpro` with `version` field (e.g. `"3.00"`, `"4.06"`). Falls through to extension check (`.gp`, `.gp3`, `.gp4`, `.gp5`, `.gpx`, `.gp6`, `.gp7`) for GPX/GP6/GP7 which have a different container.
+3. XML prolog + `score-partwise`/`timewise` root → `musicxml`
+4. ChordPro directives regex → `chordpro`
+5. UG section headers → `ultimateguitar`
+6. Inline bracket chords → `chordpro`
+7. COW heuristic (≥70% chord tokens) → `chords-over-words`
+8. Extension fallback (.cho, .pro, .crd) → `chordpro`
+9. Default → `unknown`
+
+### Guitar Pro pipeline
+`loadFile()` calls `isGuitarProFormat(detected)` → stores raw `ArrayBuffer` in `gpFileBuffer` state → switches to `alphatab` mode. `AlphaTabRenderer` receives `fileBytes: Uint8Array` (no `xmlText`). `ScoreLoader.loadScoreFromBytes()` auto-detects GP3/4/5/X format from the bytes. The `onScoreLoaded` callback fires after parsing, extracts track names, ChordPro text, and note positions via `guitarProConverter.ts`.
 
 ---
 
@@ -316,6 +330,16 @@ Tablature state:
   tabMeasuresPerRow (number)         — how many measures to lay out per system row
   tabPartIndex (number)              — index into score.parts for multi-part files
   tabRenderError (string)            — last VexFlow render error, cleared on success
+
+AlphaTab / Guitar Pro state:
+  alphaTabSettings (AlphaTabUiSettings)     — display settings for stave/layout/scale
+  alphaTabRenderError (string)              — last AlphaTab render error
+  alphaTabNotePositions (NotePositionMap[]) — fretboard positions (from XML heuristic OR GP exact)
+  gpFileBuffer (ArrayBuffer | null)         — raw GP file bytes; non-null = GP file is loaded
+  gpVersion (string)                        — GP version string, e.g. "4.06" or "3.00"
+  gpTracks (string[])                       — track names extracted from AlphaTab Score model
+  gpChordProText (string)                   — ChordPro extracted from GP beat text/chord diagrams
+  gpChordProWarnings (string[])             — conversion warnings
 
 OMR state:
   omrFile, omrJobId, omrJobStatus, omrSummary, omrPollingTimerRef
@@ -405,3 +429,6 @@ Test files live in `src/**/__tests__/`:
 | Rehearsal marks overlapping chord symbols | Fixed 2026-04-18 (SVG post-processing) |
 | Rehearsal mark repositioning not applied on PDF/print export re-render | Fixed 2026-04-19 — repositioning now applied after every export/print render and after restore render |
 | First-system rehearsal marks not repositioned (no gap above) | By design — only inter-system gaps are centred |
+| Guitar Pro GP3/GP4/GP5/GPX support added | Added 2026-05-01 — AlphaTab renders notation+tab; ChordPro extracted from beat annotations; exact string/fret positions shown in fretboard panel |
+| GP ChordPro extraction depends on beat.text / chord diagrams | GP3/4 often store chord names as beat text annotations; GP5/X may use diagram data instead — extraction quality varies by file |
+| GP transpose not yet wired | GP files are rendered verbatim; the transpose bar has no effect on GP scores (AlphaTab handles transposition internally) |

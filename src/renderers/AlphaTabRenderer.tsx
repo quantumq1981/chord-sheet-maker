@@ -1,40 +1,51 @@
 // AlphaTab rendering component.
 //
-// Renders standard notation + guitar tablature simultaneously using the
-// AlphaTab engine (distinct from the VexFlow-only tab mode).  The component
-// manages the AlphaTabApi lifecycle: it creates the API once on mount, loads a
-// score whenever xmlText changes, and destroys cleanly on unmount.
+// Renders standard notation + guitar tablature using the AlphaTab engine.
+// Accepts either a MusicXML string (xmlText) or raw binary file bytes
+// (fileBytes) for Guitar Pro 3/4/5/X files — ScoreLoader auto-detects format.
 //
 // Blank-screen root causes (and fixes applied here):
 //   1. Container has no height → fixed by enforcing min-height via CSS class.
-//   2. fontDirectory points nowhere → fixed by computing the absolute URL from
-//      document.baseURI so it works in both dev and GitHub Pages production.
-//   3. Worker URL unresolved → we serve the worker file as a static asset
-//      from public/alphaTab.worker.min.mjs and point core.workerFile to it.
-//   4. renderScore called before API ready → fixed by calling it inside the
-//      renderFinished callback that fires after worker bootstrap.
+//   2. fontDirectory points nowhere → fixed by computing absolute URL from
+//      document.baseURI so it works in dev and GitHub Pages production.
+//   3. Worker URL unresolved → static asset served from public/.
+//   4. renderScore called before API ready → called only inside renderFinished.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { AlphaTabUiSettings } from '../types/alphatab';
 
 interface Props {
-  xmlText: string;
+  /** MusicXML text — used when fileBytes is not provided. */
+  xmlText?: string;
+  /** Raw binary file bytes (GP3/4/5/X). Takes precedence over xmlText. */
+  fileBytes?: Uint8Array;
   uiSettings: AlphaTabUiSettings;
   onApiReady?: (api: alphaTab.AlphaTabApi) => void;
+  /** Called synchronously after ScoreLoader parses the file, before rendering starts. */
+  onScoreLoaded?: (score: alphaTab.model.Score) => void;
   onError?: (msg: string) => void;
 }
 
-export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onError }: Props) {
+export default function AlphaTabRenderer({
+  xmlText,
+  fileBytes,
+  uiSettings,
+  onApiReady,
+  onScoreLoaded,
+  onError,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null);
   const readyRef = useRef(false);
-  const pendingXmlRef = useRef<string | null>(null);
+  const pendingDataRef = useRef<string | Uint8Array | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Compute absolute URLs so the same code works in Vite dev server and in
-  // production (GitHub Pages sub-path) without hard-coding a host.
+  // Keep callbacks in refs so loadData closure never goes stale.
+  const onScoreLoadedRef = useRef(onScoreLoaded);
+  useEffect(() => { onScoreLoadedRef.current = onScoreLoaded; }, [onScoreLoaded]);
+
   const baseUrl = new URL('./', document.baseURI).href;
   const fontDir = `${baseUrl}font/`;
   const workerUrl = `${baseUrl}alphaTab.worker.min.mjs`;
@@ -42,10 +53,8 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
   const buildSettings = useCallback((): alphaTab.Settings => {
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
-    // Point to the statically served worker file so the browser can spin up
-    // the background rendering thread without the Vite bundler plugin.
     (s.core as unknown as Record<string, unknown>).workerFile = workerUrl;
-    s.player.enablePlayer = false; // disabled — avoids SF2 fetch failures
+    s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
       case 'scoreTab': (s.display as alphaTab.DisplaySettings).staveProfile = alphaTab.StaveProfile.ScoreTab; break;
@@ -63,10 +72,11 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     return s;
   }, [fontDir, workerUrl, uiSettings]);
 
-  const loadXml = useCallback((api: alphaTab.AlphaTabApi, xml: string, partIdx: number) => {
+  const loadData = useCallback((api: alphaTab.AlphaTabApi, data: string | Uint8Array, partIdx: number) => {
     try {
-      const data = new TextEncoder().encode(xml);
-      const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(data, api.settings);
+      const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+      const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, api.settings);
+      onScoreLoadedRef.current?.(score);
       const tracks = partIdx >= 0 && partIdx < score.tracks.length ? [partIdx] : undefined;
       api.renderScore(score, tracks);
     } catch (e: unknown) {
@@ -77,10 +87,13 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     }
   }, [onError]);
 
+  // Derive the active file data; fileBytes wins over xmlText.
+  const fileData: string | Uint8Array = fileBytes ?? (xmlText ?? '');
+
   // Initialize once on mount.
   useEffect(() => {
     if (!containerRef.current) return;
-    if (apiRef.current) return; // already init
+    if (apiRef.current) return;
 
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
@@ -88,10 +101,7 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     readyRef.current = false;
 
     api.renderStarted.on(() => setStatus('loading'));
-
-    api.renderFinished.on(() => {
-      setStatus('ready');
-    });
+    api.renderFinished.on(() => setStatus('ready'));
 
     (api as unknown as { error: { on: (fn: (e: { message?: string }) => void) => void } })
       .error.on((e) => {
@@ -101,19 +111,18 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
         onError?.(msg);
       });
 
-    // Use renderFinished as the "ready" signal and then load any pending score.
     api.renderFinished.on(() => {
       if (!readyRef.current) {
         readyRef.current = true;
         onApiReady?.(api);
-        if (pendingXmlRef.current) {
-          loadXml(api, pendingXmlRef.current, uiSettings.partIndex);
-          pendingXmlRef.current = null;
+        if (pendingDataRef.current) {
+          loadData(api, pendingDataRef.current, uiSettings.partIndex);
+          pendingDataRef.current = null;
         }
       }
     });
 
-    pendingXmlRef.current = xmlText;
+    pendingDataRef.current = fileData || null;
 
     return () => {
       apiRef.current?.destroy();
@@ -123,18 +132,19 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty — API created once
 
-  // Re-load score whenever xmlText or partIndex changes.
+  // Re-load when file data or partIndex changes.
   useEffect(() => {
+    if (!fileData) return;
     if (!apiRef.current) {
-      pendingXmlRef.current = xmlText;
+      pendingDataRef.current = fileData;
       return;
     }
     if (!readyRef.current) {
-      pendingXmlRef.current = xmlText;
+      pendingDataRef.current = fileData;
       return;
     }
-    loadXml(apiRef.current, xmlText, uiSettings.partIndex);
-  }, [xmlText, uiSettings.partIndex, loadXml]);
+    loadData(apiRef.current, fileData, uiSettings.partIndex);
+  }, [fileData, uiSettings.partIndex, loadData]);
 
   // Apply scale changes live without full API recreation.
   const prevScaleRef = useRef(uiSettings.display.scale);
@@ -161,11 +171,10 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
     if (!(staveChanged || layoutChanged || barsChanged)) return;
     if (!apiRef.current || !containerRef.current) return;
 
-    // Destroy and recreate with new settings.
     apiRef.current.destroy();
     apiRef.current = null;
     readyRef.current = false;
-    pendingXmlRef.current = xmlText;
+    pendingDataRef.current = fileData || null;
     setStatus('loading');
 
     const settings = buildSettings();
@@ -176,9 +185,9 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
       if (!readyRef.current) {
         readyRef.current = true;
         onApiReady?.(api);
-        if (pendingXmlRef.current) {
-          loadXml(api, pendingXmlRef.current, uiSettings.partIndex);
-          pendingXmlRef.current = null;
+        if (pendingDataRef.current) {
+          loadData(api, pendingDataRef.current, uiSettings.partIndex);
+          pendingDataRef.current = null;
         }
       }
     });
@@ -190,10 +199,8 @@ export default function AlphaTabRenderer({ xmlText, uiSettings, onApiReady, onEr
         setErrorMsg(msg);
         onError?.(msg);
       });
-
-    pendingXmlRef.current = xmlText;
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      xmlText, uiSettings.partIndex, buildSettings, loadXml, onApiReady, onError]);
+      fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {
