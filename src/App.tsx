@@ -1249,6 +1249,16 @@ export default function App() {
     setZoom((prev) => Math.max(0.4, Math.min(2.5, Number((prev + delta).toFixed(2)))));
   }, []);
 
+  const adjustAlphaTabZoom = useCallback((delta: number) => {
+    setAlphaTabSettings((prev) => ({
+      ...prev,
+      display: {
+        ...prev.display,
+        scale: Math.max(0.5, Math.min(2.0, Number((prev.display.scale + delta).toFixed(2)))),
+      },
+    }));
+  }, []);
+
   const fitWidth = useCallback(() => {
     const container = containerRef.current;
     const osmd = osmdRef.current;
@@ -1803,6 +1813,8 @@ export default function App() {
                 <span className="mode-badge mode-badge--alphatab">
                   {gpFileBuffer ? `Guitar Pro ${gpVersion}` : 'AlphaTab'}
                 </span>
+                <button type="button" onClick={() => adjustAlphaTabZoom(-0.1)}>Zoom −</button>
+                <button type="button" onClick={() => adjustAlphaTabZoom(0.1)}>Zoom +</button>
                 {/* Notation / Tab View switches are only meaningful for MusicXML files */}
                 {!gpFileBuffer && (
                   <>
