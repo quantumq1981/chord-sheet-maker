@@ -54,6 +54,10 @@ export default function AlphaTabRenderer({
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
     (s.core as unknown as Record<string, unknown>).workerFile = workerUrl;
+    // iOS Safari's Web Worker bootstrap silently hangs (module worker support
+    // is unreliable). Disabling workers makes AlphaTab render synchronously on
+    // the main thread, which works correctly on all platforms.
+    s.core.useWorkers = false;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
