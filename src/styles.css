@@ -270,6 +270,24 @@ select:disabled {
     overflow-y: scroll;
     -webkit-overflow-scrolling: touch;
   }
+
+  /* Side panel is hidden by default on mobile; revealed via Settings toggle. */
+  .side-panel {
+    display: none;
+  }
+  .side-panel.side-panel--open {
+    display: block;
+  }
+}
+
+/* Settings toggle only needed on mobile — hidden on desktop. */
+.sidebar-toggle-btn {
+  display: none;
+}
+@media (max-width: 1100px) {
+  .sidebar-toggle-btn {
+    display: inline-flex;
+  }
 }
 
 .chordpro-options-grid {

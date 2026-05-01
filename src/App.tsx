@@ -729,6 +729,7 @@ export default function App() {
   const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
   const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
   const [alphaTabFullscreen, setAlphaTabFullscreen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // ── Guitar Pro file state ──
   const [gpFileBuffer, setGpFileBuffer] = useState<ArrayBuffer | null>(null);
@@ -1878,6 +1879,16 @@ export default function App() {
         {appMode !== 'empty' && (
           <button type="button" onClick={clearAll}>Clear</button>
         )}
+        {appMode !== 'empty' && (
+          <button
+            type="button"
+            className="sidebar-toggle-btn"
+            onClick={() => setSidebarOpen((o) => !o)}
+            aria-expanded={sidebarOpen}
+          >
+            {sidebarOpen ? 'Hide ▲' : 'Settings ▼'}
+          </button>
+        )}
       </header>
 
       {/* ── Error banners ── */}
@@ -1975,8 +1986,8 @@ export default function App() {
         )}
 
         {/* ── Right: side panel ── */}
-        <aside className="side-panel">
-          <OmrImportPanel
+        <aside className={`side-panel${sidebarOpen ? ' side-panel--open' : ''}`}>
+          {appMode !== 'alphatab' && <OmrImportPanel
             accept={OMR_FILE_INPUT_ACCEPT}
             file={omrFile}
             mode={omrMode}
@@ -2013,7 +2024,7 @@ export default function App() {
               triggerBlobDownload(new Blob([omrInlineMusicXml], { type: 'application/xml;charset=utf-8' }), `${getBaseFilename(loadedFilename)}.omr.musicxml`);
               showExportSuccess('Downloaded OMR-generated MusicXML.');
             }}
-          />
+          />}
 
           {/* ── Chord-chart mode panel ── */}
           {appMode === 'chord-chart' && chartDocument && (
