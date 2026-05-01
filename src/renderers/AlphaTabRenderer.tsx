@@ -14,7 +14,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { AlphaTabUiSettings } from '../types/alphatab';
-import { isIOS } from '../utils/platform';
 
 // How long to wait for the worker bootstrap before falling back to
 // synchronous (main-thread) rendering.
