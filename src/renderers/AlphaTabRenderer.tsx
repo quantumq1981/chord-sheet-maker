@@ -15,16 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { AlphaTabUiSettings } from '../types/alphatab';
-
-// Detect iOS/iPadOS. Module Web Workers hang silently on iOS Safari, so we
-// disable workers there and render synchronously on the main thread instead.
-function isIOS(): boolean {
-  return (
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    // iPadOS 13+ reports as MacIntel but has touch points
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-  );
-}
+import { isIOS } from '../utils/platform';
 
 interface Props {
   /** MusicXML text — used when fileBytes is not provided. */
