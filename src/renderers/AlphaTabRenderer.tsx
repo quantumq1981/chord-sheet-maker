@@ -9,7 +9,8 @@
 //   2. fontDirectory points nowhere → fixed by computing absolute URL from
 //      document.baseURI so it works in dev and GitHub Pages production.
 //   3. Worker URL unresolved → static asset served from public/.
-//   4. renderScore called before API ready → called only inside renderFinished.
+//   4. useWorkers=false (iOS compat) kills bootstrap renderFinished → API marked
+//      ready synchronously; data-change effect calls loadData immediately.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -102,10 +103,20 @@ export default function AlphaTabRenderer({
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-    readyRef.current = false;
+    // useWorkers = false → API is synchronously ready; no bootstrap renderFinished fires.
+    // The data-change effect below will call loadData once readyRef is true.
+    readyRef.current = true;
 
     api.renderStarted.on(() => setStatus('loading'));
-    api.renderFinished.on(() => setStatus('ready'));
+
+    let apiReadyNotified = false;
+    api.renderFinished.on(() => {
+      setStatus('ready');
+      if (!apiReadyNotified) {
+        apiReadyNotified = true;
+        onApiReady?.(api);
+      }
+    });
 
     (api as unknown as { error: { on: (fn: (e: { message?: string }) => void) => void } })
       .error.on((e) => {
@@ -114,19 +125,6 @@ export default function AlphaTabRenderer({
         setErrorMsg(msg);
         onError?.(msg);
       });
-
-    api.renderFinished.on(() => {
-      if (!readyRef.current) {
-        readyRef.current = true;
-        onApiReady?.(api);
-        if (pendingDataRef.current) {
-          loadData(api, pendingDataRef.current, uiSettings.partIndex);
-          pendingDataRef.current = null;
-        }
-      }
-    });
-
-    pendingDataRef.current = fileData || null;
 
     return () => {
       apiRef.current?.destroy();
@@ -178,21 +176,19 @@ export default function AlphaTabRenderer({
     apiRef.current.destroy();
     apiRef.current = null;
     readyRef.current = false;
-    pendingDataRef.current = fileData || null;
     setStatus('loading');
 
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
+    readyRef.current = true;
 
+    let apiReadyNotified2 = false;
     api.renderFinished.on(() => {
-      if (!readyRef.current) {
-        readyRef.current = true;
+      setStatus('ready');
+      if (!apiReadyNotified2) {
+        apiReadyNotified2 = true;
         onApiReady?.(api);
-        if (pendingDataRef.current) {
-          loadData(api, pendingDataRef.current, uiSettings.partIndex);
-          pendingDataRef.current = null;
-        }
       }
     });
 
@@ -203,6 +199,11 @@ export default function AlphaTabRenderer({
         setErrorMsg(msg);
         onError?.(msg);
       });
+
+    // Load immediately — no bootstrap event to wait for.
+    if (fileData) {
+      loadData(api, fileData, uiSettings.partIndex);
+    }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
       fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
 
