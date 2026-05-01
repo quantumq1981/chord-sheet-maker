@@ -23,10 +23,14 @@ export type DetectedFormat =
   | { format: 'chordpro' }
   | { format: 'ultimateguitar' }
   | { format: 'chords-over-words' }
+  | { format: 'guitarpro'; version: string }
   | { format: 'unknown' };
 
 // ZIP local-file magic: PK\x03\x04
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04] as const;
+
+// Guitar Pro file extensions
+const GP_EXTENSIONS = new Set(['gp', 'gp3', 'gp4', 'gp5', 'gpx', 'gp6', 'gp7']);
 
 // Canonical chord token pattern (root + optional quality + optional bass)
 const CHORD_TOKEN_RE =
@@ -42,6 +46,28 @@ const UG_SECTION_RE =
 
 // Inline bracket chord, e.g. [Am7], [F#/A], [Bbmaj7]
 const BRACKET_CHORD_RE = /\[[A-G][#b]?[^\]\n]{0,10}\]/;
+
+/**
+ * Detect Guitar Pro binary format. GP3/4/5 files begin with a Pascal-style
+ * length-prefixed string: byte[0] = length, bytes[1..length] = "FICHIER GUITAR PRO vX.XX".
+ * GPX (GP6/7) uses a different container — we fall through to extension matching.
+ */
+function detectGuitarPro(bytes: Uint8Array, ext: string): { format: 'guitarpro'; version: string } | null {
+  if (bytes.length >= 5) {
+    const len = bytes[0];
+    if (len >= 5 && len <= 35 && bytes.length > len) {
+      const header = new TextDecoder('latin-1').decode(bytes.slice(1, len + 1));
+      if (header.startsWith('FICHIER GUITAR PRO v')) {
+        return { format: 'guitarpro', version: header.slice('FICHIER GUITAR PRO v'.length) };
+      }
+    }
+  }
+  // GPX / GP6 / GP7: no shared magic prefix; rely on extension
+  if (GP_EXTENSIONS.has(ext)) {
+    return { format: 'guitarpro', version: ext };
+  }
+  return null;
+}
 
 function hasZipMagic(bytes: Uint8Array): boolean {
   return (
@@ -81,6 +107,10 @@ export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): Detected
   }
 
   const ext = fileExtension(filename);
+
+  // 1.5. Guitar Pro binary or extension match
+  const gp = detectGuitarPro(bytes, ext);
+  if (gp) return gp;
 
   // Decode up to 2 KB for text-based heuristics
   const head = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(0, 2048));
@@ -134,6 +164,10 @@ export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): Detected
 
 export function isMusicXmlFormat(detected: DetectedFormat): boolean {
   return detected.format === 'musicxml' || detected.format === 'mxl';
+}
+
+export function isGuitarProFormat(detected: DetectedFormat): detected is { format: 'guitarpro'; version: string } {
+  return detected.format === 'guitarpro';
 }
 
 export function isChordChartFormat(detected: DetectedFormat): boolean {
