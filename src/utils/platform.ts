@@ -1,5 +1,7 @@
-// iOS/iPadOS detection. Module Web Workers hang silently on iOS Safari, so
-// AlphaTab runs synchronously there — keep rendering settings lightweight.
+// iOS/iPadOS detection used for rendering defaults. On iOS, AlphaTab renders
+// via the web worker (same as other platforms), but the synchronous fallback
+// path (triggered if the worker times out) runs on the main thread and is
+// expensive — so we default to a lighter stave profile and smaller scale.
 export function isIOS(): boolean {
   return (
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
