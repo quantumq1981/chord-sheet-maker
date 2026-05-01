@@ -140,29 +140,24 @@ export default function AlphaTabRenderer({
     loadData(apiRef.current, fileData, uiSettings.partIndex);
   }, [fileData, uiSettings.partIndex, loadData]);
 
-  // Apply scale changes live without full API recreation.
-  const prevScaleRef = useRef(uiSettings.display.scale);
-  useEffect(() => {
-    if (prevScaleRef.current === uiSettings.display.scale) return;
-    prevScaleRef.current = uiSettings.display.scale;
-    if (!apiRef.current || !readyRef.current) return;
-    (apiRef.current.settings.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
-    apiRef.current.updateSettings();
-  }, [uiSettings.display.scale]);
-
-  // Re-render when layout-affecting settings change (stave profile, layout mode, bars per row).
+  // Re-render when layout-affecting settings change (stave profile, layout mode, bars per row, scale).
+  // Scale is included here rather than a separate updateSettings() call because updateSettings()
+  // alone does not visually re-render the score in useWorkers=false mode.
   const prevStaveRef = useRef(uiSettings.display.staveProfile);
   const prevLayoutRef = useRef(uiSettings.display.layoutMode);
   const prevBarsRef = useRef(uiSettings.display.barsPerRow);
+  const prevScaleRef = useRef(uiSettings.display.scale);
   useEffect(() => {
     const staveChanged = prevStaveRef.current !== uiSettings.display.staveProfile;
     const layoutChanged = prevLayoutRef.current !== uiSettings.display.layoutMode;
     const barsChanged = prevBarsRef.current !== uiSettings.display.barsPerRow;
+    const scaleChanged = prevScaleRef.current !== uiSettings.display.scale;
     prevStaveRef.current = uiSettings.display.staveProfile;
     prevLayoutRef.current = uiSettings.display.layoutMode;
     prevBarsRef.current = uiSettings.display.barsPerRow;
+    prevScaleRef.current = uiSettings.display.scale;
 
-    if (!(staveChanged || layoutChanged || barsChanged)) return;
+    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged)) return;
     if (!apiRef.current || !containerRef.current) return;
 
     apiRef.current.destroy();
@@ -175,6 +170,7 @@ export default function AlphaTabRenderer({
     apiRef.current = api;
     readyRef.current = true;
 
+    api.renderStarted.on(() => setStatus('loading'));
     let notifiedReady2 = false;
     api.renderFinished.on(() => {
       setStatus('ready');
@@ -196,7 +192,7 @@ export default function AlphaTabRenderer({
       loadData(api, fileData, uiSettings.partIndex);
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
+      uiSettings.display.scale, fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {

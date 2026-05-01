@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { AlphaTabUiSettings } from '../types/alphatab';
 
 interface Part {
@@ -18,6 +19,11 @@ export default function AlphaTabControls({ settings, parts, onSettingsChange }: 
   const setDisplay = <K extends keyof AlphaTabUiSettings['display']>(
     key: K, value: AlphaTabUiSettings['display'][K],
   ) => onSettingsChange({ ...settings, display: { ...settings.display, [key]: value } });
+
+  // Local display state for the zoom slider — updates the label live while dragging,
+  // but commits to parent (triggering re-render) only on pointer/key release.
+  const [localScale, setLocalScale] = useState(settings.display.scale);
+  useEffect(() => { setLocalScale(settings.display.scale); }, [settings.display.scale]);
 
   return (
     <>
@@ -47,7 +53,7 @@ export default function AlphaTabControls({ settings, parts, onSettingsChange }: 
 
       <div className="tab-settings-row">
         <label className="export-label" htmlFor="at-scale">
-          Zoom: {Math.round(settings.display.scale * 100)}%
+          Zoom: {Math.round(localScale * 100)}%
         </label>
         <input
           id="at-scale"
@@ -55,8 +61,10 @@ export default function AlphaTabControls({ settings, parts, onSettingsChange }: 
           min={0.5}
           max={2}
           step={0.05}
-          value={settings.display.scale}
-          onChange={(e) => setDisplay('scale', Number(e.target.value))}
+          value={localScale}
+          onChange={(e) => setLocalScale(Number(e.target.value))}
+          onPointerUp={(e) => setDisplay('scale', Number((e.target as HTMLInputElement).value))}
+          onKeyUp={() => setDisplay('scale', localScale)}
           className="tab-range"
         />
       </div>
