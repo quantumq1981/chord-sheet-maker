@@ -4,12 +4,12 @@
 // Accepts either a MusicXML string (xmlText) or raw binary file bytes
 // (fileBytes) for Guitar Pro 3/4/5/X files — ScoreLoader auto-detects format.
 //
-// useWorkers=false: AlphaTab renders synchronously on the main thread.
-// Workers are unreliable in this Vite setup (the auto-detected scriptFile URL
-// for the bundled chunk may fail as a module worker), so we disable them.
-// iOS defaults to tab-only stave + 0.75 scale to reduce sync render time.
-// readyRef is set immediately after API creation — AlphaTab is synchronously
-// ready when useWorkers=false, so calling renderScore right away is safe.
+// Worker setup: alphaTab.worker.min.mjs is served from public/ alongside
+// alphaTab.core.mjs (copied there by the Vite buildStart hook). scriptFile is
+// set explicitly so AlphaTab uses the static worker instead of trying to load
+// the Vite-bundled chunk as a module worker (which fails silently).
+// readyRef is set immediately — renderScore() queues to the worker internally
+// if the worker thread hasn't finished loading yet.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -52,10 +52,10 @@ export default function AlphaTabRenderer({
   const buildSettings = useCallback((): alphaTab.Settings => {
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
-    // useWorkers=false: synchronous rendering on main thread. Workers require
-    // AlphaTab to load its own bundled chunk as a module worker, which fails
-    // silently in our Vite setup and leaves the page stuck on "Rendering score".
-    s.core.useWorkers = false;
+    // Point to the pre-built worker in public/ so layout/rendering runs off the
+    // main thread. Auto-detection would use import.meta.url → the Vite chunk,
+    // which cannot be loaded as a module worker.
+    s.core.scriptFile = `${baseUrl}alphaTab.worker.min.mjs`;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
@@ -72,7 +72,7 @@ export default function AlphaTabRenderer({
     }
     (s.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
     return s;
-  }, [fontDir, uiSettings]);
+  }, [baseUrl, fontDir, uiSettings]);
 
   const loadData = useCallback((api: alphaTab.AlphaTabApi, data: string | Uint8Array, partIdx: number) => {
     try {
@@ -116,7 +116,7 @@ export default function AlphaTabRenderer({
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-    // useWorkers=false → synchronously ready right after construction.
+    // renderScore() queues to the worker internally — safe to call immediately.
     readyRef.current = true;
 
     api.renderStarted.on(() => setStatus('loading'));
@@ -158,7 +158,7 @@ export default function AlphaTabRenderer({
 
   // Re-render when layout-affecting settings change (stave profile, layout mode, bars per row, scale).
   // Scale is included here rather than a separate updateSettings() call because updateSettings()
-  // alone does not visually re-render the score in useWorkers=false mode.
+  // alone does not visually re-render the score.
   const prevStaveRef = useRef(uiSettings.display.staveProfile);
   const prevLayoutRef = useRef(uiSettings.display.layoutMode);
   const prevBarsRef = useRef(uiSettings.display.barsPerRow);
