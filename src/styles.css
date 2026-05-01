@@ -260,6 +260,16 @@ select:disabled {
     width: 100%;
     order: 2;
   }
+
+  /* Clamp AlphaTab to a fixed viewport height on mobile so the page itself
+     stays short and the top-bar controls remain reachable. The score scrolls
+     inside its own box rather than expanding the entire page. */
+  .alphatab-viewport {
+    height: 80vh;
+    max-height: 80vh;
+    overflow-y: scroll;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .chordpro-options-grid {
@@ -754,7 +764,6 @@ select:disabled {
 .alphatab-wrapper {
   position: relative;
   width: 100%;
-  min-height: 70vh;
 }
 
 .alphatab-loading {
