@@ -4,20 +4,16 @@
 // Accepts either a MusicXML string (xmlText) or raw binary file bytes
 // (fileBytes) for Guitar Pro 3/4/5/X files — ScoreLoader auto-detects format.
 //
-// Worker setup: AlphaTab's web worker (alphaTab.worker.min.mjs) imports
-// alphaTab.core.mjs at runtime. Both files must be served from public/ —
-// the copy-alphatab-core Vite plugin keeps them in sync on every build.
-// Workers run off the main thread on all platforms; an 8-second timeout
-// falls back to synchronous rendering if the worker fails to bootstrap
-// (e.g. old iOS Safari < 15.4 that lacks module worker support).
+// Key design notes:
+//   - AlphaTab does NOT fire renderFinished during worker bootstrap — only after
+//     renderScore() is called. So readyRef is set immediately after API creation
+//     and the data-change effect drives the initial load.
+//   - alphaTab.core.mjs must be in public/ alongside the worker; the
+//     copy-alphatab-core Vite plugin keeps it in sync on every build.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { AlphaTabUiSettings } from '../types/alphatab';
-
-// How long to wait for the worker bootstrap before falling back to
-// synchronous (main-thread) rendering.
-const WORKER_BOOTSTRAP_TIMEOUT_MS = 8000;
 
 interface Props {
   /** MusicXML text — used when fileBytes is not provided. */
@@ -58,9 +54,9 @@ export default function AlphaTabRenderer({
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
     (s.core as unknown as Record<string, unknown>).workerFile = workerUrl;
-    // Workers enabled on all platforms. alphaTab.core.mjs is served alongside
-    // the worker in public/ so the import resolves correctly. An 8s timeout
-    // in the init effect falls back to synchronous rendering if needed.
+    // Workers enabled — alphaTab.core.mjs is served alongside the worker in
+    // public/ so the worker's import resolves. AlphaTab queues renderScore
+    // calls internally until the worker is ready; we don't need to wait.
     s.core.useWorkers = true;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
@@ -98,18 +94,6 @@ export default function AlphaTabRenderer({
   // Derive the active file data; fileBytes wins over xmlText.
   const fileData: string | Uint8Array = fileBytes ?? (xmlText ?? '');
 
-  // Shared helper: handle the "API is now ready" transition — clears bootstrap
-  // timeout, marks ready, and loads any pending data.
-  function activateApi(api: alphaTab.AlphaTabApi, timeoutId: ReturnType<typeof setTimeout>, partIdx: number) {
-    clearTimeout(timeoutId);
-    readyRef.current = true;
-    if (pendingDataRef.current) {
-      const d = pendingDataRef.current;
-      pendingDataRef.current = null;
-      loadData(api, d, partIdx);
-    }
-  }
-
   // Initialize once on mount.
   useEffect(() => {
     if (!containerRef.current) return;
@@ -118,26 +102,15 @@ export default function AlphaTabRenderer({
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
+    // AlphaTab queues renderScore calls until its worker is ready, so we can
+    // mark the API as ready immediately and let the data-change effect load.
+    readyRef.current = true;
 
     api.renderStarted.on(() => setStatus('loading'));
-
-    // If the worker fails to bootstrap (missing module worker support on old iOS,
-    // network error, etc.), activate synchronously after the timeout so the page
-    // doesn't hang forever.
-    const bootstrapTimeoutId = setTimeout(() => {
-      if (!readyRef.current && apiRef.current) {
-        activateApi(apiRef.current, bootstrapTimeoutId, uiSettings.partIndex);
-      }
-    }, WORKER_BOOTSTRAP_TIMEOUT_MS);
 
     let notifiedReady = false;
     api.renderFinished.on(() => {
       setStatus('ready');
-      if (!readyRef.current) {
-        // Bootstrap renderFinished: worker initialised successfully.
-        activateApi(api, bootstrapTimeoutId, uiSettings.partIndex);
-        return;
-      }
       if (!notifiedReady) {
         notifiedReady = true;
         onApiReady?.(api);
@@ -152,10 +125,7 @@ export default function AlphaTabRenderer({
         onError?.(msg);
       });
 
-    pendingDataRef.current = fileData || null;
-
     return () => {
-      clearTimeout(bootstrapTimeoutId);
       apiRef.current?.destroy();
       apiRef.current = null;
       readyRef.current = false;
@@ -166,11 +136,7 @@ export default function AlphaTabRenderer({
   // Re-load when file data or partIndex changes.
   useEffect(() => {
     if (!fileData) return;
-    if (!apiRef.current) {
-      pendingDataRef.current = fileData;
-      return;
-    }
-    if (!readyRef.current) {
+    if (!apiRef.current || !readyRef.current) {
       pendingDataRef.current = fileData;
       return;
     }
@@ -210,20 +176,11 @@ export default function AlphaTabRenderer({
     const settings = buildSettings();
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
-
-    const bootstrapTimeoutId2 = setTimeout(() => {
-      if (!readyRef.current && apiRef.current) {
-        activateApi(apiRef.current, bootstrapTimeoutId2, uiSettings.partIndex);
-      }
-    }, WORKER_BOOTSTRAP_TIMEOUT_MS);
+    readyRef.current = true;
 
     let notifiedReady2 = false;
     api.renderFinished.on(() => {
       setStatus('ready');
-      if (!readyRef.current) {
-        activateApi(api, bootstrapTimeoutId2, uiSettings.partIndex);
-        return;
-      }
       if (!notifiedReady2) {
         notifiedReady2 = true;
         onApiReady?.(api);
@@ -238,9 +195,9 @@ export default function AlphaTabRenderer({
         onError?.(msg);
       });
 
-    pendingDataRef.current = fileData || null;
-
-    // Note: no cleanup return here — the outer effect's cleanup handles destroy.
+    if (fileData) {
+      loadData(api, fileData, uiSettings.partIndex);
+    }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
       fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
 
