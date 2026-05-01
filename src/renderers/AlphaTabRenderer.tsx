@@ -8,8 +8,10 @@
 //   - AlphaTab does NOT fire renderFinished during worker bootstrap — only after
 //     renderScore() is called. So readyRef is set immediately after API creation
 //     and the data-change effect drives the initial load.
-//   - alphaTab.core.mjs must be in public/ alongside the worker; the
-//     copy-alphatab-core Vite plugin keeps it in sync on every build.
+//   - Worker URL is NOT set manually. AlphaTab auto-detects its own bundle URL
+//     via import.meta.url and spawns a module worker from it. Setting a custom
+//     workerFile (not a real AlphaTab property) was silently ignored; setting
+//     scriptFile incorrectly breaks the auto-detection.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -48,15 +50,13 @@ export default function AlphaTabRenderer({
 
   const baseUrl = new URL('./', document.baseURI).href;
   const fontDir = `${baseUrl}font/`;
-  const workerUrl = `${baseUrl}alphaTab.worker.min.mjs`;
 
   const buildSettings = useCallback((): alphaTab.Settings => {
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
-    (s.core as unknown as Record<string, unknown>).workerFile = workerUrl;
-    // Workers enabled — alphaTab.core.mjs is served alongside the worker in
-    // public/ so the worker's import resolves. AlphaTab queues renderScore
-    // calls internally until the worker is ready; we don't need to wait.
+    // Do NOT set scriptFile — AlphaTab auto-detects it via import.meta.url
+    // (resolves to the bundled alphaTab chunk URL). Setting it incorrectly
+    // causes worker launch to fail. workerFile is not a valid AlphaTab property.
     s.core.useWorkers = true;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
@@ -74,7 +74,7 @@ export default function AlphaTabRenderer({
     }
     (s.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
     return s;
-  }, [fontDir, workerUrl, uiSettings]);
+  }, [fontDir, uiSettings]);
 
   const loadData = useCallback((api: alphaTab.AlphaTabApi, data: string | Uint8Array, partIdx: number) => {
     try {
