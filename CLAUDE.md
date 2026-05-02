@@ -432,3 +432,96 @@ Test files live in `src/**/__tests__/`:
 | Guitar Pro GP3/GP4/GP5/GPX support added | Added 2026-05-01 — AlphaTab renders notation+tab; ChordPro extracted from beat annotations; exact string/fret positions shown in fretboard panel |
 | GP ChordPro extraction depends on beat.text / chord diagrams | GP3/4 often store chord names as beat text annotations; GP5/X may use diagram data instead — extraction quality varies by file |
 | GP transpose not yet wired | GP files are rendered verbatim; the transpose bar has no effect on GP scores (AlphaTab handles transposition internally) |
+| **GP files stuck at "Rendering score…" — never display** | **OPEN as of 2026-05-02 — see full investigation below** |
+
+---
+
+## AlphaTab / Guitar Pro Rendering — Open Investigation (2026-05-02)
+
+### Symptom
+MusicXML files render correctly in AlphaTab mode. GP3/GP4 files are stuck indefinitely at "Rendering score…" — `renderFinished` never fires, no error banner appears.
+
+### Architecture summary
+`AlphaTabRenderer.tsx` uses the AlphaTab web worker for off-thread rendering:
+- `s.core.scriptFile = ${baseUrl}alphaTab.worker.min.mjs` (pre-built worker in `public/`)
+- `public/alphaTab.worker.min.mjs` imports `./alphaTab.core.mjs` (copied from `dist/alphaTab.core.min.mjs` by Vite buildStart hook)
+- On load: `ScoreLoader.loadScoreFromBytes(bytes, settings)` runs on the **main thread** to extract metadata (track names, hasTabData fallback), then `api.load(bytes, tracks)` sends a copy of the data to the worker thread for actual rendering
+
+### Bugs found and fixed (all merged to main)
+
+| PR | Bug | Root cause |
+|---|---|---|
+| #158 | `useWorkers=false` blocked main thread | Every re-render froze iOS; disabled workers because auto-detection via `import.meta.url` pointed to Vite chunk (wrong URL). Fixed by setting `s.core.scriptFile` explicitly. |
+| #161 | `renderScore(preParsedScore)` silently fails in worker mode | Serialising a full AlphaTab `Score` object across the worker boundary is unreliable. Switched to `api.load(bytes)` which sends raw bytes (cleanly transferable). |
+| #162 | `new Uint8Array(gpFileBuffer)` recreated on every App render | `fileBytes` prop changed reference on every render → `loadData` effect re-fired → cancelled the in-progress worker render in an infinite loop. Fixed with `useMemo([gpFileBuffer])`. |
+| #165 | `onError` inline arrow recreated on every App render | Same loop — `onError` was in `loadData`'s dep array. Fixed by ref-forwarding `onError` and `onApiReady` (same pattern already used for `onScoreLoaded`). `loadData` dep array is now `[]`. |
+
+### Current code path (post-fixes)
+```
+App.tsx renders:
+  <AlphaTabRenderer
+    fileBytes={gpFileBytes}               // useMemo — stable
+    onScoreLoaded={handleGpScoreLoaded}   // useCallback — stable
+    onError={setAlphaTabRenderError}      // React setter — stable
+    uiSettings={alphaTabSettings}
+  />
+
+AlphaTabRenderer.loadData():
+  bytes = fileBytes (Uint8Array)
+  score = ScoreLoader.loadScoreFromBytes(bytes, api.settings)  // main thread, for metadata
+  onScoreLoadedRef.current?.(score)          // extracts track names, ChordPro, positions
+  api.load(bytes.buffer.slice(...), tracks)  // ArrayBuffer copy → worker
+```
+
+### Remaining hypotheses (in priority order)
+
+1. **Worker silently rejects the data** — `api.load()` returns `boolean`. If it returns `false`, the worker never starts. This could happen if AlphaTab's `load()` doesn't recognise a `Uint8Array` / `ArrayBuffer` in this version. **Check**: open DevTools Console → look for `[AlphaTab][load] false` log line added in `AlphaTabRenderer.tsx`.
+
+2. **Worker parses but `scoreLoaded` / `renderFinished` never fires** — If the worker receives the bytes but fails internally (parse error, assertion, OOM), it might not fire the error event either. **Check**: look for `[AlphaTab][scoreLoaded]` log in DevTools Console. If it never appears, the worker isn't parsing.
+
+3. **Worker file fails to load** — Network error loading `alphaTab.worker.min.mjs` or `alphaTab.core.mjs`. **Check**: DevTools → Network tab → filter `alphaTab` — both files should return HTTP 200. If 404, the `public/` deployment is broken.
+
+4. **AlphaTab error event not wired correctly** — The error handler uses a type assertion to access `api.error`. If AlphaTab v1.8.2 changed the error event structure, errors fire silently. **Check**: add `console.error` directly inside the `.error.on()` handler.
+
+5. **`ArrayBuffer` transferred then reused** — `api.load()` may TRANSFER `bytes.buffer` to the worker (detaching it). If any subsequent re-render passes the same (now-empty) buffer, it would fail. Current code passes `bytes.buffer.slice(...)` (a copy) to avoid this, but verify by checking `bytes.byteLength` after the `api.load()` call.
+
+6. **GP format not supported in `alphaTab.core.min.mjs`** — The worker uses the 1.1 MB minified core. If GP3/GP4 importers were stripped, only MusicXML would work. **Check**: search `alphaTab.core.min.mjs` for `"FICHIER GUITAR PRO"` (the GP file signature). If absent, the importer is missing.
+
+### How to debug in the browser (DevTools)
+
+1. Open `https://quantumq1981.github.io/chord-sheet-maker/`
+2. Open DevTools → **Console** tab
+3. Load a GP file (e.g. `steely-dan-kid_charlemegne.gp3`)
+4. Look for these log lines (added to `AlphaTabRenderer.tsx`):
+   - `[AlphaTab] loadData called` — confirms `loadData` ran once (not in a loop)
+   - `[AlphaTab] ScoreLoader parsed ok, tracks: N` — main-thread parse worked
+   - `[AlphaTab] api.load() returned: true/false` — if `false`, worker rejected the data
+   - `[AlphaTab] scoreLoaded (worker)` — if this never appears, worker isn't parsing
+   - `[AlphaTab] renderFinished` — if this never appears but scoreLoaded did, rendering hangs
+5. Open **Network** tab → filter by "alphaTab" → verify both `alphaTab.worker.min.mjs` and `alphaTab.core.mjs` return HTTP 200
+
+### Test GP files (in `public/`)
+All 12 files below parse successfully on the main thread via `ScoreLoader`:
+
+| File | Format | Tracks |
+|---|---|---|
+| `carlton-larry-emotions_wound_us_so.gp4` | GP4 | 2 (Lead, rhythm) |
+| `carlton-larry-her_favorite_song.gp4` | GP4 | 1 |
+| `ford-robben-he_don_t_play_nothin_but_the_blues.gp3` | GP3 | 1 |
+| `gaye-marvin-i_heard_it_through_the_grapevine.gp4` | GP4 | 5 (organ, guitar, bass, percussion) |
+| `huey-lewis-and-the-news-i_want_a_new_drug.gp4` | GP4 | 8 |
+| `huey-lewis-and-the-news-if_this_is_it.gp4` | GP4 | 9 |
+| `parker-charlie-parker_s_mood.gp4` | GP4 | 3 |
+| `steely-dan-hey_nineteen.gp3` | GP3 | 8 |
+| `steely-dan-kid_charlemegne.gp3` | GP3 | 6 |
+| `the-allman-brothers-band-blue_sky.gp3` | GP3 | 4 |
+| `the-allman-brothers-band-in_memory_of_elizabeth_reed.gp3` | GP3 | 3 |
+| `the-doobie-brothers-takin_it_to_the_streets.gp4` | GP4 | 12 |
+
+### Key files
+- `src/renderers/AlphaTabRenderer.tsx` — all AlphaTab rendering logic
+- `src/App.tsx:735-749` — GP state + `gpFileBytes` useMemo
+- `src/App.tsx:1747-1756` — `handleGpScoreLoaded` (extracts track names / ChordPro / note positions)
+- `src/App.tsx:1970-1979` — AlphaTabRenderer JSX props
+- `vite.config.ts` — `copy-alphatab-core` plugin (copies core.min.mjs → public/alphaTab.core.mjs at build time)
+- `public/alphaTab.worker.min.mjs` — worker entry point (1.6 KB, imports alphaTab.core.mjs)

@@ -79,9 +79,11 @@ export default function AlphaTabRenderer({
   }, [baseUrl, fontDir, uiSettings]);
 
   const loadData = useCallback((api: alphaTab.AlphaTabApi, data: string | Uint8Array, partIdx: number) => {
+    console.log('[AlphaTab] loadData called, byteLength:', typeof data === 'string' ? data.length : data.byteLength);
     try {
       const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
       const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, api.settings);
+      console.log('[AlphaTab] ScoreLoader parsed ok, tracks:', score.tracks.length);
       onScoreLoadedRef.current?.(score);
 
       // If the file has no guitar string data (e.g. piano MusicXML), AlphaTab will
@@ -100,11 +102,20 @@ export default function AlphaTabRenderer({
       }
 
       const tracks = partIdx >= 0 && partIdx < score.tracks.length ? [partIdx] : undefined;
-      // api.load() sends raw bytes to the worker thread rather than trying to
-      // serialise the Score object cross-thread (which silently fails in worker mode).
-      api.load(bytes, tracks);
+      // Pass a copy of the ArrayBuffer so postMessage can transfer it to the worker
+      // without detaching the original gpFileBytes (memoized) Uint8Array.
+      const bufferCopy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const accepted = api.load(bufferCopy, tracks);
+      console.log('[AlphaTab] api.load() returned:', accepted, '| tracks:', tracks);
+      if (!accepted) {
+        const msg = 'AlphaTab rejected the file data (api.load returned false)';
+        setStatus('error');
+        setErrorMsg(msg);
+        onErrorRef.current?.(msg);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error('[AlphaTab] loadData error:', msg);
       setStatus('error');
       setErrorMsg(msg);
       onErrorRef.current?.(msg);
@@ -125,10 +136,11 @@ export default function AlphaTabRenderer({
     // renderScore() queues to the worker internally — safe to call immediately.
     readyRef.current = true;
 
-    api.renderStarted.on(() => setStatus('loading'));
+    api.renderStarted.on(() => { console.log('[AlphaTab] renderStarted'); setStatus('loading'); });
 
     let notifiedReady = false;
     api.renderFinished.on(() => {
+      console.log('[AlphaTab] renderFinished');
       setStatus('ready');
       if (!notifiedReady) {
         notifiedReady = true;
@@ -136,9 +148,17 @@ export default function AlphaTabRenderer({
       }
     });
 
+    (api as unknown as {
+      scoreLoaded: { on: (fn: (score: alphaTab.model.Score) => void) => void };
+      error: { on: (fn: (e: { message?: string }) => void) => void };
+    }).scoreLoaded.on((score) => {
+      console.log('[AlphaTab] scoreLoaded (worker) tracks:', score?.tracks?.length);
+    });
+
     (api as unknown as { error: { on: (fn: (e: { message?: string }) => void) => void } })
       .error.on((e) => {
         const msg = e?.message ?? 'AlphaTab error';
+        console.error('[AlphaTab] error event:', msg);
         setStatus('error');
         setErrorMsg(msg);
         onErrorRef.current?.(msg);
