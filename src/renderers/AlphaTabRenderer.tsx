@@ -45,6 +45,10 @@ export default function AlphaTabRenderer({
   // Keep callbacks in refs so loadData closure never goes stale.
   const onScoreLoadedRef = useRef(onScoreLoaded);
   useEffect(() => { onScoreLoadedRef.current = onScoreLoaded; }, [onScoreLoaded]);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  const onApiReadyRef = useRef(onApiReady);
+  useEffect(() => { onApiReadyRef.current = onApiReady; }, [onApiReady]);
 
   const baseUrl = new URL('./', document.baseURI).href;
   const fontDir = `${baseUrl}font/`;
@@ -103,9 +107,9 @@ export default function AlphaTabRenderer({
       const msg = e instanceof Error ? e.message : String(e);
       setStatus('error');
       setErrorMsg(msg);
-      onError?.(msg);
+      onErrorRef.current?.(msg);
     }
-  }, [onError]);
+  }, []);
 
   // Derive the active file data; fileBytes wins over xmlText.
   const fileData: string | Uint8Array = fileBytes ?? (xmlText ?? '');
@@ -128,7 +132,7 @@ export default function AlphaTabRenderer({
       setStatus('ready');
       if (!notifiedReady) {
         notifiedReady = true;
-        onApiReady?.(api);
+        onApiReadyRef.current?.(api);
       }
     });
 
@@ -137,7 +141,7 @@ export default function AlphaTabRenderer({
         const msg = e?.message ?? 'AlphaTab error';
         setStatus('error');
         setErrorMsg(msg);
-        onError?.(msg);
+        onErrorRef.current?.(msg);
       });
 
     return () => {
@@ -194,7 +198,7 @@ export default function AlphaTabRenderer({
       setStatus('ready');
       if (!notifiedReady2) {
         notifiedReady2 = true;
-        onApiReady?.(api);
+        onApiReadyRef.current?.(api);
       }
     });
 
@@ -203,14 +207,14 @@ export default function AlphaTabRenderer({
         const msg = e?.message ?? 'AlphaTab error';
         setStatus('error');
         setErrorMsg(msg);
-        onError?.(msg);
+        onErrorRef.current?.(msg);
       });
 
     if (fileData) {
       loadData(api, fileData, uiSettings.partIndex);
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      uiSettings.display.scale, fileData, uiSettings.partIndex, buildSettings, loadData, onApiReady, onError]);
+      uiSettings.display.scale, fileData, uiSettings.partIndex, buildSettings, loadData]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {
