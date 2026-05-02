@@ -1974,7 +1974,7 @@ export default function App() {
                 fileBytes={gpFileBytes}
                 uiSettings={alphaTabSettings}
                 onScoreLoaded={gpFileBuffer ? handleGpScoreLoaded : undefined}
-                onError={(e) => setAlphaTabRenderError(e)}
+                onError={setAlphaTabRenderError}
               />
             )}
           </section>
