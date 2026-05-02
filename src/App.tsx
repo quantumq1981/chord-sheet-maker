@@ -737,6 +737,13 @@ export default function App() {
   const [gpTracks, setGpTracks] = useState<string[]>([]);
   const [gpChordProText, setGpChordProText] = useState('');
   const [gpChordProWarnings, setGpChordProWarnings] = useState<string[]>([]);
+  // Stable Uint8Array view — only recreated when gpFileBuffer changes, not on every render.
+  // Without this, every App re-render (e.g. from onScoreLoaded state updates) creates a new
+  // object, causing AlphaTabRenderer's fileData effect to fire and cancel the ongoing worker render.
+  const gpFileBytes = useMemo(
+    () => (gpFileBuffer ? new Uint8Array(gpFileBuffer) : undefined),
+    [gpFileBuffer],
+  );
 
   // ── Derived: XML diagnostics ──
   const parsedXml = useMemo(() => {
@@ -1964,7 +1971,7 @@ export default function App() {
               <AlphaTabRenderer
                 key={gpFileBuffer ? `gp-${loadedFilename}` : `at-${loadedXmlText.slice(0, 40)}`}
                 xmlText={gpFileBuffer ? undefined : loadedXmlText}
-                fileBytes={gpFileBuffer ? new Uint8Array(gpFileBuffer) : undefined}
+                fileBytes={gpFileBytes}
                 uiSettings={alphaTabSettings}
                 onScoreLoaded={gpFileBuffer ? handleGpScoreLoaded : undefined}
                 onError={(e) => setAlphaTabRenderError(e)}
