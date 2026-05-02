@@ -8,7 +8,7 @@
 // alphaTab.core.mjs (copied there by the Vite buildStart hook). scriptFile is
 // set explicitly so AlphaTab uses the static worker instead of trying to load
 // the Vite-bundled chunk as a module worker (which fails silently).
-// readyRef is set immediately — renderScore() queues to the worker internally
+// readyRef is set immediately — api.load() queues to the worker internally
 // if the worker thread hasn't finished loading yet.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -96,7 +96,9 @@ export default function AlphaTabRenderer({
       }
 
       const tracks = partIdx >= 0 && partIdx < score.tracks.length ? [partIdx] : undefined;
-      api.renderScore(score, tracks);
+      // api.load() sends raw bytes to the worker thread rather than trying to
+      // serialise the Score object cross-thread (which silently fails in worker mode).
+      api.load(bytes, tracks);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus('error');
