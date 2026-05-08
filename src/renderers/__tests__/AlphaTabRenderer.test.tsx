@@ -10,7 +10,7 @@ let renderFinishedCallbacks: Array<() => void> = [];
 
 vi.mock('@coderline/alphatab', () => {
   class Settings {
-    core: Record<string, unknown> = { fontDirectory: '/font/', workerFile: '/alphaTab.worker.min.mjs' };
+    core: Record<string, unknown> = { fontDirectory: '/font/', scriptFile: '/alphaTab.worker.min.mjs', useWorkers: true };
     display = { layoutMode: 0, staveProfile: 1, barsPerRow: -1, scale: 1 };
     player = { enablePlayer: false };
   }
@@ -22,6 +22,7 @@ vi.mock('@coderline/alphatab', () => {
     };
     public renderStarted = { on: vi.fn() };
     public error = { on: vi.fn() };
+    public scoreLoaded = { on: vi.fn() };
 
     constructor(_container: HTMLDivElement, settings: Settings) {
       this.settings = settings;
@@ -40,7 +41,9 @@ vi.mock('@coderline/alphatab', () => {
     DisplaySettings: Settings,
     importer: {
       ScoreLoader: {
-        loadScoreFromBytes: vi.fn(() => ({ tracks: [{ name: 'Guitar' }] })),
+        loadScoreFromBytes: vi.fn(() => ({
+          tracks: [{ name: 'Guitar', staves: [{ stringTuning: { tunings: [64, 59, 55, 50, 45, 40] } }] }],
+        })),
       },
     },
   };

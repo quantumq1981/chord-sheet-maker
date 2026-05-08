@@ -1,7 +1,4 @@
-// iOS/iPadOS detection used for rendering defaults. On iOS, AlphaTab renders
-// via the web worker (same as other platforms), but the synchronous fallback
-// path (triggered if the worker times out) runs on the main thread and is
-// expensive — so we default to a lighter stave profile and smaller scale.
+// iOS/iPadOS detection helper retained for browser-specific export behavior.
 export function isIOS(): boolean {
   return (
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -10,8 +7,8 @@ export function isIOS(): boolean {
   );
 }
 
-/** Default AlphaTab stave profile: tab-only on iOS (faster), scoreTab elsewhere. */
-export const DEFAULT_STAVE_PROFILE = isIOS() ? 'tab' : 'scoreTab';
+/** Default AlphaTab stave profile: show standard notation and guitar tab together. */
+export const DEFAULT_STAVE_PROFILE = 'scoreTab';
 
 /** Default AlphaTab scale: 0.75 on all platforms to keep initial SVG element count manageable. */
 export const DEFAULT_SCALE = 0.75;
