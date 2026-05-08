@@ -16,4 +16,6 @@ export interface AlphaTabUiSettings {
   display: AlphaTabDisplaySettings;
   enablePlayer: boolean;
   partIndex: number;
+  /** Temporary calibrated print profile for iOS/Safari Print → Save PDF. */
+  printProfile?: boolean;
 }
