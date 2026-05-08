@@ -133,6 +133,8 @@ const OMR_POLL_SLOWDOWN_AFTER_MS = 30000;
 
 const IOS_USER_AGENT = /iPad|iPhone|iPod/;
 const PRINT_ZOOM = 1.0;
+const ALPHATAB_PRINT_SCALE = 0.95;
+
 
 function applyPrintProfile(osmd: OpenSheetMusicDisplay, pageSize: PrintPageSize): void {
   // setPageFormat handles all internal dimension/margin values in OSMD's own coordinate
@@ -729,6 +731,10 @@ export default function App() {
   const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
   const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
   const [alphaTabFullscreen, setAlphaTabFullscreen] = useState(false);
+  const [alphaTabPrintPending, setAlphaTabPrintPending] = useState(false);
+  const [alphaTabRenderTick, setAlphaTabRenderTick] = useState(0);
+  const alphaTabPrintRestoreRef = useRef<AlphaTabUiSettings | null>(null);
+  const alphaTabPrintStartTickRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // ── Guitar Pro file state ──
@@ -1004,10 +1010,14 @@ export default function App() {
     // AlphaTab
     setAlphaTabRenderError('');
     setAlphaTabNotePositions([]);
+    setAlphaTabPrintPending(false);
+    alphaTabPrintRestoreRef.current = null;
+    document.body.classList.remove('printing-alphatab', 'print-page-letter', 'print-page-a4');
     setAlphaTabSettings({
       display: { staveProfile: DEFAULT_STAVE_PROFILE, layoutMode: 'page', barsPerRow: -1, scale: DEFAULT_SCALE },
       enablePlayer: false,
       partIndex: 0,
+      printProfile: false,
     });
     // Guitar Pro
     setGpFileBuffer(null);
@@ -1578,6 +1588,90 @@ export default function App() {
     }
   }, [loadedXmlText, pdfPageSize, renderedPageCount, showExportError]);
 
+  const printAlphaTab = useCallback(() => {
+    const svgs = getAlphaTabSvgEls();
+    if (appMode !== 'alphatab' || svgs.length === 0) {
+      showExportError('No Guitar Pro / AlphaTab score found. Wait for the score to finish rendering, then try Print.');
+      return;
+    }
+
+    const printSettings: AlphaTabUiSettings = {
+      ...alphaTabSettings,
+      printProfile: true,
+      display: {
+        ...alphaTabSettings.display,
+        staveProfile: 'scoreTab',
+        layoutMode: 'page',
+        barsPerRow: -1,
+        scale: ALPHATAB_PRINT_SCALE,
+      },
+    };
+
+    alphaTabPrintRestoreRef.current = alphaTabSettings;
+    alphaTabPrintStartTickRef.current = alphaTabRenderTick;
+    setAlphaTabFullscreen(false);
+    setAlphaTabPrintPending(true);
+    document.body.classList.add('printing-alphatab', `print-page-${pdfPageSize}`);
+    document.body.classList.remove(pdfPageSize === 'letter' ? 'print-page-a4' : 'print-page-letter');
+
+    const alreadyPrintReady =
+      alphaTabSettings.printProfile === true &&
+      alphaTabSettings.display.staveProfile === printSettings.display.staveProfile &&
+      alphaTabSettings.display.layoutMode === printSettings.display.layoutMode &&
+      alphaTabSettings.display.barsPerRow === printSettings.display.barsPerRow &&
+      alphaTabSettings.display.scale === printSettings.display.scale;
+
+    if (alreadyPrintReady) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        const restoreAfterPrint = () => {
+          window.removeEventListener('afterprint', restoreAfterPrint);
+          document.body.classList.remove('printing-alphatab', 'print-page-letter', 'print-page-a4');
+          setAlphaTabPrintPending(false);
+          const restore = alphaTabPrintRestoreRef.current;
+          alphaTabPrintRestoreRef.current = null;
+          if (restore) setAlphaTabSettings(restore);
+        };
+        window.addEventListener('afterprint', restoreAfterPrint, { once: true });
+        window.print();
+        window.setTimeout(restoreAfterPrint, 5000);
+      }));
+      return;
+    }
+
+    setAlphaTabSettings(printSettings);
+    showExportSuccess('Preparing print layout: notation + tab, portrait page, 10–15mm margins.');
+  }, [alphaTabRenderTick, alphaTabSettings, appMode, getAlphaTabSvgEls, pdfPageSize, showExportError, showExportSuccess]);
+
+  useEffect(() => {
+    if (!alphaTabPrintPending) return;
+    if (alphaTabRenderTick <= alphaTabPrintStartTickRef.current) return;
+    if (alphaTabSettings.printProfile !== true) return;
+    if (alphaTabSettings.display.staveProfile !== 'scoreTab') return;
+    if (alphaTabSettings.display.layoutMode !== 'page') return;
+    if (alphaTabSettings.display.barsPerRow !== -1) return;
+    if (alphaTabSettings.display.scale !== ALPHATAB_PRINT_SCALE) return;
+
+    let restored = false;
+    const restoreAfterPrint = () => {
+      if (restored) return;
+      restored = true;
+      window.removeEventListener('afterprint', restoreAfterPrint);
+      document.body.classList.remove('printing-alphatab', 'print-page-letter', 'print-page-a4');
+      setAlphaTabPrintPending(false);
+      const restore = alphaTabPrintRestoreRef.current;
+      alphaTabPrintRestoreRef.current = null;
+      if (restore) setAlphaTabSettings(restore);
+    };
+
+    const timer = window.setTimeout(() => {
+      window.addEventListener('afterprint', restoreAfterPrint, { once: true });
+      window.print();
+      window.setTimeout(restoreAfterPrint, 5000);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [alphaTabPrintPending, alphaTabRenderTick, alphaTabSettings]);
+
   // ── MusicXML → ChordPro ──
   const generateChordPro = useCallback(async () => {
     if (!loadedXmlText) { showExportError('Load a MusicXML file before generating ChordPro.'); return; }
@@ -1974,6 +2068,7 @@ export default function App() {
                 fileBytes={gpFileBytes}
                 uiSettings={alphaTabSettings}
                 onScoreLoaded={gpFileBuffer ? handleGpScoreLoaded : undefined}
+                onRenderFinished={() => setAlphaTabRenderTick((tick) => tick + 1)}
                 onError={setAlphaTabRenderError}
               />
             )}
@@ -2538,6 +2633,17 @@ export default function App() {
               )}
 
               <h2>Export AlphaTab</h2>
+              <label className="export-label" htmlFor="alphatab-pdf-size">PDF / Print Page Size</label>
+              <select
+                id="alphatab-pdf-size"
+                value={pdfPageSize}
+                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                disabled={!canExportAlphaTab}
+              >
+                <option value="letter">Letter (Portrait)</option>
+                <option value="a4">A4 (Portrait)</option>
+              </select>
+              <p className="export-hint">Print uses notation + tablature, portrait layout, 15mm top margin, and 10mm side/bottom margins for iPhone/iPad Save to PDF.</p>
               <div className="export-actions">
                 <button type="button" onClick={exportAlphaTabSvg} disabled={!canExportAlphaTab}>
                   Export SVG
@@ -2547,6 +2653,9 @@ export default function App() {
                 </button>
                 <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
                   Generate PDF
+                </button>
+                <button type="button" onClick={printAlphaTab} disabled={!canExportAlphaTab || alphaTabPrintPending}>
+                  {alphaTabPrintPending ? 'Preparing Print…' : 'Print / Save PDF'}
                 </button>
               </div>
 

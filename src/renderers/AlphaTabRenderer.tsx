@@ -22,6 +22,8 @@ interface Props {
   fileBytes?: Uint8Array;
   uiSettings: AlphaTabUiSettings;
   onApiReady?: (api: alphaTab.AlphaTabApi) => void;
+  /** Called after every completed render, including settings changes before print. */
+  onRenderFinished?: () => void;
   /** Called synchronously after ScoreLoader parses the file, before rendering starts. */
   onScoreLoaded?: (score: alphaTab.model.Score) => void;
   onError?: (msg: string) => void;
@@ -41,6 +43,7 @@ export default function AlphaTabRenderer({
   fileBytes,
   uiSettings,
   onApiReady,
+  onRenderFinished,
   onScoreLoaded,
   onError,
 }: Props) {
@@ -60,6 +63,8 @@ export default function AlphaTabRenderer({
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   const onApiReadyRef = useRef(onApiReady);
   useEffect(() => { onApiReadyRef.current = onApiReady; }, [onApiReady]);
+  const onRenderFinishedRef = useRef(onRenderFinished);
+  useEffect(() => { onRenderFinishedRef.current = onRenderFinished; }, [onRenderFinished]);
 
   const baseUrl = new URL('./', document.baseURI).href;
   const fontDir = `${baseUrl}font/`;
@@ -113,6 +118,7 @@ export default function AlphaTabRenderer({
       clearRenderTimer();
       setStatus('ready');
       setErrorMsg('');
+      onRenderFinishedRef.current?.();
       if (!notifiedReady) {
         notifiedReady = true;
         onApiReadyRef.current?.(api);
@@ -197,6 +203,11 @@ export default function AlphaTabRenderer({
       const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
       const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, api.settings);
       console.log('[AlphaTab] ScoreLoader parsed ok, tracks:', score.tracks.length);
+      if (uiSettings.printProfile) {
+        score.stylesheet.hideEmptyStaves = true;
+        score.stylesheet.hideEmptyStavesInFirstSystem = false;
+        score.stylesheet.barNumberDisplay = alphaTab.model.BarNumberDisplay.Hide;
+      }
       onScoreLoadedRef.current?.(score);
 
       // If the file has no guitar string data (e.g. piano MusicXML), AlphaTab will
@@ -262,17 +273,20 @@ export default function AlphaTabRenderer({
   const prevLayoutRef = useRef(uiSettings.display.layoutMode);
   const prevBarsRef = useRef(uiSettings.display.barsPerRow);
   const prevScaleRef = useRef(uiSettings.display.scale);
+  const prevPrintProfileRef = useRef(uiSettings.printProfile);
   useEffect(() => {
     const staveChanged = prevStaveRef.current !== uiSettings.display.staveProfile;
     const layoutChanged = prevLayoutRef.current !== uiSettings.display.layoutMode;
     const barsChanged = prevBarsRef.current !== uiSettings.display.barsPerRow;
     const scaleChanged = prevScaleRef.current !== uiSettings.display.scale;
+    const printProfileChanged = prevPrintProfileRef.current !== uiSettings.printProfile;
     prevStaveRef.current = uiSettings.display.staveProfile;
     prevLayoutRef.current = uiSettings.display.layoutMode;
     prevBarsRef.current = uiSettings.display.barsPerRow;
     prevScaleRef.current = uiSettings.display.scale;
+    prevPrintProfileRef.current = uiSettings.printProfile;
 
-    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged)) return;
+    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged || printProfileChanged)) return;
     if (!containerRef.current) return;
 
     clearRenderTimer();
@@ -286,7 +300,7 @@ export default function AlphaTabRenderer({
       loadData(api, fileData, uiSettings.partIndex);
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      uiSettings.display.scale, fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
+      uiSettings.display.scale, uiSettings.printProfile, fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {
