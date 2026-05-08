@@ -7,9 +7,9 @@
 // Worker setup: alphaTab.worker.min.mjs is served from public/ alongside
 // alphaTab.core.mjs (copied there by the Vite buildStart hook). scriptFile is
 // set explicitly so AlphaTab uses the static worker instead of trying to load
-// the Vite-bundled chunk as a module worker (which fails silently).
-// readyRef is set immediately — api.load() queues to the worker internally
-// if the worker thread hasn't finished loading yet.
+// the Vite-bundled chunk as a module worker (which fails silently). If Safari
+// or iOS WebKit fails to complete a worker render, the component retries once
+// with worker rendering disabled instead of leaving the UI stuck forever.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -27,6 +27,15 @@ interface Props {
   onError?: (msg: string) => void;
 }
 
+type AlphaTabEvent<T> = { on?: (fn: (arg: T) => void) => void };
+type AlphaTabApiWithOptionalEvents = alphaTab.AlphaTabApi & {
+  scoreLoaded?: AlphaTabEvent<alphaTab.model.Score>;
+  error?: AlphaTabEvent<{ message?: string }>;
+};
+
+const WORKER_RENDER_TIMEOUT_MS = 20_000;
+const FALLBACK_RENDER_TIMEOUT_MS = 30_000;
+
 export default function AlphaTabRenderer({
   xmlText,
   fileBytes,
@@ -39,6 +48,8 @@ export default function AlphaTabRenderer({
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null);
   const readyRef = useRef(false);
   const pendingDataRef = useRef<string | Uint8Array | null>(null);
+  const renderTimerRef = useRef<number | null>(null);
+  const renderAttemptRef = useRef(0);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -53,13 +64,25 @@ export default function AlphaTabRenderer({
   const baseUrl = new URL('./', document.baseURI).href;
   const fontDir = `${baseUrl}font/`;
 
-  const buildSettings = useCallback((): alphaTab.Settings => {
+  const clearRenderTimer = useCallback(() => {
+    if (renderTimerRef.current) {
+      window.clearTimeout(renderTimerRef.current);
+      renderTimerRef.current = null;
+    }
+  }, []);
+
+  const buildSettings = useCallback((useWorkers = true): alphaTab.Settings => {
     const s = new alphaTab.Settings();
     s.core.fontDirectory = fontDir;
     // Point to the pre-built worker in public/ so layout/rendering runs off the
     // main thread. Auto-detection would use import.meta.url → the Vite chunk,
     // which cannot be loaded as a module worker.
     s.core.scriptFile = `${baseUrl}alphaTab.worker.min.mjs`;
+    s.core.useWorkers = useWorkers;
+    // Mobile Safari sometimes never appends lazy chunks inside nested scrolling
+    // containers. Render all SVG chunks once the score is laid out so exporting
+    // PDF/PNG/SVG sees the same content the user sees.
+    s.core.enableLazyLoading = false;
     s.player.enablePlayer = false;
     (s.display as alphaTab.DisplaySettings).layoutMode = alphaTab.LayoutMode.Page;
     switch (uiSettings.display.staveProfile) {
@@ -78,8 +101,98 @@ export default function AlphaTabRenderer({
     return s;
   }, [baseUrl, fontDir, uiSettings]);
 
+  const attachApiEvents = useCallback((api: alphaTab.AlphaTabApi) => {
+    api.renderStarted.on(() => {
+      console.log('[AlphaTab] renderStarted');
+      setStatus('loading');
+    });
+
+    let notifiedReady = false;
+    api.renderFinished.on(() => {
+      console.log('[AlphaTab] renderFinished');
+      clearRenderTimer();
+      setStatus('ready');
+      setErrorMsg('');
+      if (!notifiedReady) {
+        notifiedReady = true;
+        onApiReadyRef.current?.(api);
+      }
+    });
+
+    const apiWithEvents = api as AlphaTabApiWithOptionalEvents;
+    apiWithEvents.scoreLoaded?.on?.((score) => {
+      console.log('[AlphaTab] scoreLoaded (worker) tracks:', score?.tracks?.length);
+    });
+
+    apiWithEvents.error?.on?.((e) => {
+      const msg = e?.message ?? 'AlphaTab error';
+      console.error('[AlphaTab] error event:', msg);
+      clearRenderTimer();
+      setStatus('error');
+      setErrorMsg(msg);
+      onErrorRef.current?.(msg);
+    });
+  }, [clearRenderTimer]);
+
+  const createApi = useCallback((useWorkers = true): alphaTab.AlphaTabApi | null => {
+    if (!containerRef.current) return null;
+    const settings = buildSettings(useWorkers);
+    const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
+    attachApiEvents(api);
+    apiRef.current = api;
+    readyRef.current = true;
+    return api;
+  }, [attachApiEvents, buildSettings]);
+
+  const renderParsedScore = useCallback((
+    api: alphaTab.AlphaTabApi,
+    score: alphaTab.model.Score,
+    tracks: number[] | undefined,
+    attempt: number,
+  ) => {
+    clearRenderTimer();
+    setStatus('loading');
+    setErrorMsg('');
+
+    const useWorkers = api.settings.core.useWorkers !== false;
+    const timeoutMs = useWorkers ? WORKER_RENDER_TIMEOUT_MS : FALLBACK_RENDER_TIMEOUT_MS;
+    renderTimerRef.current = window.setTimeout(() => {
+      if (attempt !== renderAttemptRef.current || apiRef.current !== api) return;
+
+      if (useWorkers && containerRef.current) {
+        console.warn('[AlphaTab] worker render timed out; retrying without workers');
+        clearRenderTimer();
+        api.destroy();
+        const fallbackApi = createApi(false);
+        if (fallbackApi) {
+          renderParsedScore(fallbackApi, score, tracks, attempt);
+          return;
+        }
+      }
+
+      const msg = useWorkers
+        ? 'AlphaTab rendering timed out before the worker responded. Try a different track or Tab-only view.'
+        : 'AlphaTab rendering timed out in the Safari/iOS fallback renderer. Try a different track or Tab-only view.';
+      setStatus('error');
+      setErrorMsg(msg);
+      onErrorRef.current?.(msg);
+    }, timeoutMs);
+
+    try {
+      api.renderScore(score, tracks);
+    } catch (e: unknown) {
+      clearRenderTimer();
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatus('error');
+      setErrorMsg(msg);
+      onErrorRef.current?.(msg);
+    }
+  }, [clearRenderTimer, createApi]);
+
   const loadData = useCallback((api: alphaTab.AlphaTabApi, data: string | Uint8Array, partIdx: number) => {
     console.log('[AlphaTab] loadData called, byteLength:', typeof data === 'string' ? data.length : data.byteLength);
+    const attempt = renderAttemptRef.current + 1;
+    renderAttemptRef.current = attempt;
     try {
       const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
       const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, api.settings);
@@ -102,25 +215,16 @@ export default function AlphaTabRenderer({
       }
 
       const tracks = partIdx >= 0 && partIdx < score.tracks.length ? [partIdx] : undefined;
-      // Pass a copy of the ArrayBuffer so postMessage can transfer it to the worker
-      // without detaching the original gpFileBytes (memoized) Uint8Array.
-      const bufferCopy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-      const accepted = api.load(bufferCopy, tracks);
-      console.log('[AlphaTab] api.load() returned:', accepted, '| tracks:', tracks);
-      if (!accepted) {
-        const msg = 'AlphaTab rejected the file data (api.load returned false)';
-        setStatus('error');
-        setErrorMsg(msg);
-        onErrorRef.current?.(msg);
-      }
+      renderParsedScore(api, score, tracks, attempt);
     } catch (e: unknown) {
+      clearRenderTimer();
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[AlphaTab] loadData error:', msg);
       setStatus('error');
       setErrorMsg(msg);
       onErrorRef.current?.(msg);
     }
-  }, []);
+  }, [clearRenderTimer, renderParsedScore]);
 
   // Derive the active file data; fileBytes wins over xmlText.
   const fileData: string | Uint8Array = fileBytes ?? (xmlText ?? '');
@@ -130,41 +234,10 @@ export default function AlphaTabRenderer({
     if (!containerRef.current) return;
     if (apiRef.current) return;
 
-    const settings = buildSettings();
-    const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
-    apiRef.current = api;
-    // renderScore() queues to the worker internally — safe to call immediately.
-    readyRef.current = true;
-
-    api.renderStarted.on(() => { console.log('[AlphaTab] renderStarted'); setStatus('loading'); });
-
-    let notifiedReady = false;
-    api.renderFinished.on(() => {
-      console.log('[AlphaTab] renderFinished');
-      setStatus('ready');
-      if (!notifiedReady) {
-        notifiedReady = true;
-        onApiReadyRef.current?.(api);
-      }
-    });
-
-    (api as unknown as {
-      scoreLoaded: { on: (fn: (score: alphaTab.model.Score) => void) => void };
-      error: { on: (fn: (e: { message?: string }) => void) => void };
-    }).scoreLoaded.on((score) => {
-      console.log('[AlphaTab] scoreLoaded (worker) tracks:', score?.tracks?.length);
-    });
-
-    (api as unknown as { error: { on: (fn: (e: { message?: string }) => void) => void } })
-      .error.on((e) => {
-        const msg = e?.message ?? 'AlphaTab error';
-        console.error('[AlphaTab] error event:', msg);
-        setStatus('error');
-        setErrorMsg(msg);
-        onErrorRef.current?.(msg);
-      });
+    createApi(true);
 
     return () => {
+      clearRenderTimer();
       apiRef.current?.destroy();
       apiRef.current = null;
       readyRef.current = false;
@@ -200,41 +273,20 @@ export default function AlphaTabRenderer({
     prevScaleRef.current = uiSettings.display.scale;
 
     if (!(staveChanged || layoutChanged || barsChanged || scaleChanged)) return;
-    if (!apiRef.current || !containerRef.current) return;
+    if (!containerRef.current) return;
 
-    apiRef.current.destroy();
+    clearRenderTimer();
+    apiRef.current?.destroy();
     apiRef.current = null;
     readyRef.current = false;
     setStatus('loading');
 
-    const settings = buildSettings();
-    const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
-    apiRef.current = api;
-    readyRef.current = true;
-
-    api.renderStarted.on(() => setStatus('loading'));
-    let notifiedReady2 = false;
-    api.renderFinished.on(() => {
-      setStatus('ready');
-      if (!notifiedReady2) {
-        notifiedReady2 = true;
-        onApiReadyRef.current?.(api);
-      }
-    });
-
-    (api as unknown as { error: { on: (fn: (e: { message?: string }) => void) => void } })
-      .error.on((e) => {
-        const msg = e?.message ?? 'AlphaTab error';
-        setStatus('error');
-        setErrorMsg(msg);
-        onErrorRef.current?.(msg);
-      });
-
-    if (fileData) {
+    const api = createApi(true);
+    if (api && fileData) {
       loadData(api, fileData, uiSettings.partIndex);
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      uiSettings.display.scale, fileData, uiSettings.partIndex, buildSettings, loadData]);
+      uiSettings.display.scale, fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {

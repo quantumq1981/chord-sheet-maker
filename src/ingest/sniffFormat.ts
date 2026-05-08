@@ -6,13 +6,14 @@
  * the most likely format.  No external dependencies.
  *
  * Detection order (first match wins):
- *   1. ZIP magic bytes → MXL (compressed MusicXML)
- *   2. XML prolog + score root element → MusicXML
- *   3. ChordPro metadata directives  → chordpro
- *   4. UG-style section headers       → ultimateguitar
- *   5. Inline bracket chords          → chordpro (bracket style)
- *   6. Chord-over-words heuristic     → chords-over-words
- *   7. File-extension fallback        → chordpro or unknown
+ *   1. Guitar Pro binary/header or GP-family extension
+ *   2. ZIP magic bytes → MXL (compressed MusicXML)
+ *   3. XML prolog + score root element → MusicXML
+ *   4. ChordPro metadata directives  → chordpro
+ *   5. UG-style section headers       → ultimateguitar
+ *   6. Inline bracket chords          → chordpro (bracket style)
+ *   7. Chord-over-words heuristic     → chords-over-words
+ *   8. File-extension fallback        → chordpro or unknown
  */
 
 export type SourceFormat = 'chordpro' | 'ultimateguitar' | 'chords-over-words';
@@ -103,16 +104,18 @@ function isChordLine(line: string): boolean {
  * @param filename  Original filename, used for extension fallback.
  */
 export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): DetectedFormat {
-  // 1. ZIP magic → MXL
+  const ext = fileExtension(filename);
+
+  // 1. Guitar Pro binary/header or extension match. This intentionally runs
+  // before ZIP detection because GPX/modern .gp files can be ZIP containers
+  // too; otherwise Safari/iOS users see an XML/MXL parse error for GP uploads.
+  const gp = detectGuitarPro(bytes, ext);
+  if (gp) return gp;
+
+  // 2. ZIP magic → MXL
   if (hasZipMagic(bytes)) {
     return { format: 'mxl' };
   }
-
-  const ext = fileExtension(filename);
-
-  // 1.5. Guitar Pro binary or extension match
-  const gp = detectGuitarPro(bytes, ext);
-  if (gp) return gp;
 
   // Decode up to 2 KB for text-based heuristics
   const head = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(0, 2048));
