@@ -27,7 +27,7 @@ export default function AlphaTabControls({ settings, parts, onSettingsChange }: 
 
   return (
     <>
-      <h2>AlphaTab Settings</h2>
+      <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>AlphaTab Settings</h2>
 
       <label className="export-label" htmlFor="at-stave">Stave profile</label>
       <select

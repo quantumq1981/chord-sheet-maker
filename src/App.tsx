@@ -1859,137 +1859,111 @@ export default function App() {
     <div className="app-shell">
       {/* ── Top bar ── */}
       <header className="top-bar">
-        <label className="upload-btn">
-          Upload
-          <input type="file" accept={FILE_INPUT_ACCEPT} onChange={onFileInput} />
-        </label>
+        {/* ── Left zone: upload + mode + view controls ── */}
+        <div className="top-bar__start">
+          <label className="upload-btn">
+            ♪ Open
+            <input type="file" accept={FILE_INPUT_ACCEPT} onChange={onFileInput} />
+          </label>
 
-        {appMode === 'empty' && (
-          <span className="hint">
-            Drag &amp; drop .xml / .musicxml / .mxl, .gp3 / .gp4 / .gp5 / .gpx (Guitar Pro), or .cho / .pro / .txt
-          </span>
-        )}
+          {appMode === 'empty' && (
+            <span className="hint">Drop a file or click Open</span>
+          )}
 
-        {(appMode === 'notation' || appMode === 'tablature' || appMode === 'alphatab') && (
-          <>
-            {appMode === 'notation' ? (
-              <>
-                <span className="mode-badge mode-badge--notation">Notation</span>
-                <button type="button" onClick={() => adjustZoom(-0.1)}>Zoom −</button>
-                <button type="button" onClick={() => adjustZoom(0.1)}>Zoom +</button>
-                <button type="button" onClick={fitWidth}>Fit Width</button>
-                <button
-                  type="button"
-                  className="mode-badge mode-badge--tab-toggle"
-                  onClick={() => setAppMode('tablature')}
-                >
-                  Tab View
-                </button>
-                <button
-                  type="button"
-                  className="mode-badge mode-badge--alphatab-toggle"
-                  onClick={() => setAppMode('alphatab')}
-                >
-                  AlphaTab View
-                </button>
-              </>
-            ) : appMode === 'tablature' ? (
-              <>
-                <span className="mode-badge mode-badge--tablature">Tab View</span>
-                <button
-                  type="button"
-                  className="mode-badge mode-badge--tab-toggle"
-                  onClick={() => setAppMode('notation')}
-                >
-                  Notation
-                </button>
-                <button
-                  type="button"
-                  className="mode-badge mode-badge--alphatab-toggle"
-                  onClick={() => setAppMode('alphatab')}
-                >
-                  AlphaTab View
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="mode-badge mode-badge--alphatab">
-                  {gpFileBuffer ? `Guitar Pro ${gpVersion}` : 'AlphaTab'}
-                </span>
-                <button type="button" onClick={() => adjustAlphaTabZoom(-0.1)}>Zoom −</button>
-                <button type="button" onClick={() => adjustAlphaTabZoom(0.1)}>Zoom +</button>
-                <button type="button" onClick={() => setAlphaTabFullscreen((f) => !f)}>
-                  {alphaTabFullscreen ? 'Exit Full' : 'Full Screen'}
-                </button>
-                {/* Notation / Tab View switches are only meaningful for MusicXML files */}
-                {!gpFileBuffer && (
-                  <>
-                    <button
-                      type="button"
-                      className="mode-badge mode-badge--tab-toggle"
-                      onClick={() => setAppMode('notation')}
-                    >
-                      Notation
-                    </button>
-                    <button
-                      type="button"
-                      className="mode-badge mode-badge--tab-toggle"
-                      onClick={() => setAppMode('tablature')}
-                    >
-                      Tab View
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-          </>
-        )}
+          {loadedFilename && appMode !== 'empty' && (
+            <span className="filename-chip" title={loadedFilename}>{loadedFilename}</span>
+          )}
 
-        {appMode === 'chord-chart' && (
-          <span className="mode-badge mode-badge--chart">Chord Chart · {detectedFormatLabel}</span>
-        )}
+          {/* ── Mode badge + view controls for notation/tab/alphatab ── */}
+          {appMode === 'notation' && (
+            <>
+              <div className="view-controls">
+                <button type="button" className="btn-view btn-view--active">Notation</button>
+                <button type="button" className="btn-view" onClick={() => setAppMode('tablature')}>Tab</button>
+                <button type="button" className="btn-view" onClick={() => setAppMode('alphatab')}>AlphaTab</button>
+              </div>
+              <button type="button" className="btn-sm" onClick={() => adjustZoom(-0.1)} title="Zoom out">−</button>
+              <button type="button" className="btn-sm" onClick={() => adjustZoom(0.1)} title="Zoom in">+</button>
+              <button type="button" className="btn-sm" onClick={fitWidth}>Fit</button>
+            </>
+          )}
 
-        {appMode !== 'empty' && (
-          <div className="transpose-row transpose-row--topbar">
-            <span className="transpose-label">Transpose</span>
-            <button type="button" onClick={() => adjustTranspose(-1)} disabled={transposeSemitones <= -12}>−</button>
-            <span className="transpose-value">
-              {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose}
-            </span>
-            <button type="button" onClick={() => adjustTranspose(1)} disabled={transposeSemitones >= 12}>+</button>
-            <button type="button" onClick={() => setTransposeSemitones(0)} disabled={transposeSemitones === 0}>
-              Reset
-            </button>
-            <select
-              className="transpose-enharmonic"
-              value={transposeEnharmonic}
-              onChange={(e) => setTransposeEnharmonic(e.target.value as EnharmonicPreference)}
-              aria-label="Enharmonic spelling"
+          {appMode === 'tablature' && (
+            <div className="view-controls">
+              <button type="button" className="btn-view" onClick={() => setAppMode('notation')}>Notation</button>
+              <button type="button" className="btn-view btn-view--active">Tab</button>
+              <button type="button" className="btn-view" onClick={() => setAppMode('alphatab')}>AlphaTab</button>
+            </div>
+          )}
+
+          {appMode === 'alphatab' && (
+            <>
+              <span className="mode-badge mode-badge--alphatab">
+                {gpFileBuffer ? `GP ${gpVersion}` : 'AlphaTab'}
+              </span>
+              {!gpFileBuffer && (
+                <div className="view-controls">
+                  <button type="button" className="btn-view" onClick={() => setAppMode('notation')}>Notation</button>
+                  <button type="button" className="btn-view" onClick={() => setAppMode('tablature')}>Tab</button>
+                  <button type="button" className="btn-view btn-view--active">AlphaTab</button>
+                </div>
+              )}
+              <button type="button" className="btn-sm" onClick={() => adjustAlphaTabZoom(-0.1)} title="Zoom out">−</button>
+              <button type="button" className="btn-sm" onClick={() => adjustAlphaTabZoom(0.1)} title="Zoom in">+</button>
+              <button type="button" className="btn-sm" onClick={() => setAlphaTabFullscreen((f) => !f)}>
+                {alphaTabFullscreen ? '⊠ Exit' : '⊡ Full'}
+              </button>
+            </>
+          )}
+
+          {appMode === 'chord-chart' && (
+            <span className="mode-badge mode-badge--chart">Chord Chart · {detectedFormatLabel}</span>
+          )}
+        </div>
+
+        {/* ── Right zone: transpose + utility actions ── */}
+        <div className="top-bar__end">
+          {appMode !== 'empty' && (
+            <div className="transpose-row transpose-row--topbar">
+              <span className="transpose-label">Transpose</span>
+              <button type="button" className="btn-sm" onClick={() => adjustTranspose(-1)} disabled={transposeSemitones <= -12}>−</button>
+              <span className="transpose-value">
+                {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose}
+              </span>
+              <button type="button" className="btn-sm" onClick={() => adjustTranspose(1)} disabled={transposeSemitones >= 12}>+</button>
+              <button type="button" className="btn-sm" onClick={() => setTransposeSemitones(0)} disabled={transposeSemitones === 0}>
+                Reset
+              </button>
+              <select
+                className="transpose-enharmonic"
+                value={transposeEnharmonic}
+                onChange={(e) => setTransposeEnharmonic(e.target.value as EnharmonicPreference)}
+                aria-label="Enharmonic spelling"
+              >
+                <option value="auto">Auto (♭/♯)</option>
+                <option value="flats">Flats (♭)</option>
+                <option value="sharps">Sharps (♯)</option>
+              </select>
+              {transposeKeyDisplay && (
+                <span className="transpose-meta">{transposeKeyDisplay}</span>
+              )}
+            </div>
+          )}
+
+          {appMode !== 'empty' && (
+            <button type="button" className="btn-sm btn-danger" onClick={clearAll}>✕ Clear</button>
+          )}
+          {appMode !== 'empty' && (
+            <button
+              type="button"
+              className="sidebar-toggle-btn btn-sm"
+              onClick={() => setSidebarOpen((o) => !o)}
+              aria-expanded={sidebarOpen}
             >
-              <option value="auto">Auto (♭/♯)</option>
-              <option value="flats">Flats (♭)</option>
-              <option value="sharps">Sharps (♯)</option>
-            </select>
-            <span className="transpose-meta">
-              {displayTranspose > 0 ? `+${displayTranspose}` : displayTranspose} semitones
-              {transposeKeyDisplay ? ` (${transposeKeyDisplay})` : ''}
-            </span>
-          </div>
-        )}
-
-        {appMode !== 'empty' && (
-          <button type="button" onClick={clearAll}>Clear</button>
-        )}
-        {appMode !== 'empty' && (
-          <button
-            type="button"
-            className="sidebar-toggle-btn"
-            onClick={() => setSidebarOpen((o) => !o)}
-            aria-expanded={sidebarOpen}
-          >
-            {sidebarOpen ? 'Hide ▲' : 'Settings ▼'}
-          </button>
-        )}
+              {sidebarOpen ? 'Hide ▲' : '⚙ Settings'}
+            </button>
+          )}
+        </div>
       </header>
 
       {/* ── Error banners ── */}
@@ -2081,7 +2055,23 @@ export default function App() {
             onDrop={onDrop}
           >
             {appMode === 'empty' && (
-              <p className="placeholder">Upload a MusicXML / MXL file or a ChordPro / text chord chart.</p>
+              <div className="empty-state">
+                <div className="empty-state__icon">♬</div>
+                <h2 className="empty-state__title">Open a Music File</h2>
+                <p className="empty-state__subtitle">Drag &amp; drop onto this area, or click <strong>♪ Open</strong> above</p>
+                <div className="empty-state__formats">
+                  <span>MusicXML</span>
+                  <span>.mxl</span>
+                  <span>.gp3</span>
+                  <span>.gp4</span>
+                  <span>.gp5</span>
+                  <span>.gpx</span>
+                  <span>ChordPro</span>
+                  <span>.cho</span>
+                  <span>.pro</span>
+                  <span>.txt</span>
+                </div>
+              </div>
             )}
             <div ref={containerRef} className="score-container" />
           </section>
@@ -2089,7 +2079,7 @@ export default function App() {
 
         {/* ── Right: side panel ── */}
         <aside className={`side-panel${sidebarOpen ? ' side-panel--open' : ''}`}>
-          {appMode !== 'alphatab' && <OmrImportPanel
+          {appMode !== 'alphatab' && <div className="panel-section"><OmrImportPanel
             accept={OMR_FILE_INPUT_ACCEPT}
             file={omrFile}
             mode={omrMode}
@@ -2126,23 +2116,26 @@ export default function App() {
               triggerBlobDownload(new Blob([omrInlineMusicXml], { type: 'application/xml;charset=utf-8' }), `${getBaseFilename(loadedFilename)}.omr.musicxml`);
               showExportSuccess('Downloaded OMR-generated MusicXML.');
             }}
-          />}
+          /></div>}
 
           {/* ── Chord-chart mode panel ── */}
           {appMode === 'chord-chart' && chartDocument && (
             <>
-              <h2>Chart Info</h2>
-              <ul>
-                <li><strong>File:</strong> {loadedFilename}</li>
-                <li><strong>Format:</strong> {detectedFormatLabel}</li>
-                {chartDocument.title && <li><strong>Title:</strong> {chartDocument.title}</li>}
-                {chartDocument.artist && <li><strong>Artist:</strong> {chartDocument.artist}</li>}
-                {chartDocument.key && <li><strong>Key:</strong> {chartDocument.key}</li>}
-                {chartDocument.capo && <li><strong>Capo:</strong> {chartDocument.capo}</li>}
-                <li><strong>Sections:</strong> {chartDocument.sections.length}</li>
-              </ul>
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Chart Info</h2>
+                <ul>
+                  <li><strong>File:</strong> {loadedFilename}</li>
+                  <li><strong>Format:</strong> {detectedFormatLabel}</li>
+                  {chartDocument.title && <li><strong>Title:</strong> {chartDocument.title}</li>}
+                  {chartDocument.artist && <li><strong>Artist:</strong> {chartDocument.artist}</li>}
+                  {chartDocument.key && <li><strong>Key:</strong> {chartDocument.key}</li>}
+                  {chartDocument.capo && <li><strong>Capo:</strong> {chartDocument.capo}</li>}
+                  <li><strong>Sections:</strong> {chartDocument.sections.length}</li>
+                </ul>
+              </div>
 
-              <h2>ChordPro Export</h2>
+              <div className="panel-section">
+              <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>ChordPro Export</h2>
               <div className="chordpro-options-grid">
                 <label className="export-label" htmlFor="chart-chordpro-bars">Bars per line</label>
                 <input
@@ -2170,7 +2163,7 @@ export default function App() {
               </div>
 
               <div className="chart-actions">
-                <button type="button" onClick={generateChartChordPro}>
+                <button type="button" className="btn-primary" onClick={generateChartChordPro}>
                   Generate ChordPro
                 </button>
                 <button type="button" onClick={generateChartCsmpn}>
@@ -2203,8 +2196,10 @@ export default function App() {
                   <ul>{chartChordProWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
                 </div>
               )}
+              </div>
 
-              <h2>CSMPN Source (ChordSheet-compatible)</h2>
+              <div className="panel-section">
+              <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>CSMPN Source</h2>
               <div className="export-actions">
                 <button type="button" onClick={() => void copyChordPro(csmpnFakeBookText)} disabled={!csmpnFakeBookText}>
                   Copy CSMPN
@@ -2230,386 +2225,388 @@ export default function App() {
                   <ul>{csmpnWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
                 </div>
               )}
+              </div>
             </>
           )}
 
           {/* ── Notation mode panel ── */}
           {appMode === 'notation' && (
             <>
-              <h2>Diagnostics</h2>
-              {diagnostics ? (
-                <ul>
-                  <li><strong>File:</strong> {loadedFilename || 'n/a'}</li>
-                  <li><strong>Root:</strong> {diagnostics.rootName}</li>
-                  <li><strong>Version:</strong> {diagnostics.version}</li>
-                  {!diagnostics.isValidXml && diagnostics.parseError && (
-                    <li><strong>Parse error:</strong> {diagnostics.parseError}</li>
-                  )}
-                  <li><strong>Parts:</strong> {diagnostics.parts}</li>
-                  <li><strong>Measures:</strong> {diagnostics.measures}</li>
-                  <li><strong>Notes:</strong> {diagnostics.notes}</li>
-                  <li><strong>Harmonies:</strong> {diagnostics.harmonies}</li>
-                  <li><strong>Has key:</strong> {diagnostics.hasKey ? 'yes' : 'no'}</li>
-                  <li><strong>Has time:</strong> {diagnostics.hasTime ? 'yes' : 'no'}</li>
-                  <li><strong>Has divisions:</strong> {diagnostics.hasDivisions ? 'yes' : 'no'}</li>
-                  <li><strong>Source type:</strong> {isMxl ? 'MXL archive' : 'XML text'}</li>
-                </ul>
-              ) : (
-                <p>No file loaded.</p>
-              )}
-
-              <h2>Warnings</h2>
-              {xmlWarnings.length > 0 ? (
-                <ul>{xmlWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
-              ) : (
-                <p>No warnings.</p>
-              )}
-
-              <h2>ChordPro Export</h2>
-              <div className="chordpro-options-grid">
-                <label className="export-label" htmlFor="chordpro-bars">Bars per line</label>
-                <input
-                  id="chordpro-bars" type="number" min={1} max={16}
-                  value={chordProUi.barsPerLine}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setChordProUi((p) => ({ ...p, barsPerLine: Number.isFinite(v) ? Math.max(1, Math.min(16, v)) : p.barsPerLine }));
-                  }}
-                />
-                <label className="export-label" htmlFor="chordpro-mode">Mode</label>
-                <select id="chordpro-mode" value={chordProUi.mode}
-                  onChange={(e) => setChordProUi((p) => ({ ...p, mode: e.target.value as ChordProModeUi }))}>
-                  <option value="auto">Auto</option>
-                  <option value="lyrics-inline">Lyrics Inline</option>
-                  <option value="grid-only">Grid Only</option>
-                  <option value="fakebook">Fake Book</option>
-                </select>
-                <label className="export-label" htmlFor="chordpro-brackets">Chord bracket style</label>
-                <select id="chordpro-brackets" value={chordProUi.chordBracketStyle}
-                  onChange={(e) => setChordProUi((p) => ({ ...p, chordBracketStyle: e.target.value as ChordProBracketUi }))}>
-                  <option value="separate">Separate</option>
-                  <option value="combined">Combined</option>
-                </select>
-                <label className="export-label" htmlFor="chordpro-repeat">Repeat</label>
-                <select id="chordpro-repeat" value={chordProUi.repeatStrategy}
-                  onChange={(e) => setChordProUi((p) => ({ ...p, repeatStrategy: e.target.value as ChordProRepeatUi }))}>
-                  <option value="none">None</option>
-                  <option value="simple-unroll">Simple Unroll</option>
-                </select>
-                <label className="export-label" htmlFor="chordpro-enharmonic">Enharmonic</label>
-                <select id="chordpro-enharmonic" value={chordProUi.enharmonicStyle}
-                  onChange={(e) => setChordProUi((p) => ({ ...p, enharmonicStyle: e.target.value as ChordProEnharmonicUi }))}>
-                  <option value="auto">Auto (key-based)</option>
-                  <option value="flats">Prefer flats</option>
-                  <option value="sharps">Prefer sharps</option>
-                </select>
-                <label className="export-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
-                  <input type="checkbox" checked={chordProUi.jazzSymbols}
-                    onChange={(e) => setChordProUi((p) => ({ ...p, jazzSymbols: e.target.checked }))} />
-                  Jazz symbols (Δ7 ø7 °7)
-                </label>
-              </div>
-
-              <div className="export-actions">
-                <button type="button" onClick={() => void generateChordPro()} disabled={!canExportNotation}>
-                  Generate ChordPro
-                </button>
-                <button type="button" onClick={() => void generateCsmpnFakeBook()} disabled={!canExportNotation}>
-                  Generate CSMPN Fake Book
-                </button>
-                <button type="button" onClick={() => void copyChordPro(chordProText)} disabled={!chordProText}>
-                  Copy
-                </button>
-                <button type="button" onClick={() => downloadChordProText(chordProText, deriveProFilename(loadedFilename))} disabled={!chordProText}>
-                  Download .pro
-                </button>
-                {canShare && (
-                  <button type="button" onClick={() => void shareText(chordProText, deriveProFilename(loadedFilename))} disabled={!chordProText}>
-                    Share
-                  </button>
-                )}
-              </div>
-
-              <textarea
-                className="chordpro-output"
-                value={chordProText}
-                placeholder="Generated ChordPro will appear here..."
-                wrap="off" spellCheck={false} readOnly
-              />
-
-              {chordProWarnings.length > 0 && (
-                <div className="warning-block">
-                  <strong>ChordPro warnings</strong>
-                  <ul>{chordProWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
-                </div>
-              )}
-
-              <h2>CSMPN Source (ChordSheet-compatible)</h2>
-              <div className="export-actions">
-                <button type="button" onClick={() => void copyChordPro(csmpnFakeBookText)} disabled={!csmpnFakeBookText}>
-                  Copy CSMPN
-                </button>
-                <button type="button" onClick={() => downloadChordProText(csmpnFakeBookText, `${baseName}.csmpn.txt`)} disabled={!csmpnFakeBookText}>
-                  Download .txt
-                </button>
-                {canShare && (
-                  <button type="button" onClick={() => void shareText(csmpnFakeBookText, `${baseName}.csmpn.txt`)} disabled={!csmpnFakeBookText}>
-                    Share
-                  </button>
-                )}
-              </div>
-              <textarea
-                className="chordpro-output"
-                value={csmpnFakeBookText}
-                placeholder="Generated CSMPN fake-book source will appear here..."
-                wrap="off" spellCheck={false} readOnly
-              />
-              {csmpnWarnings.length > 0 && (
-                <div className="warning-block">
-                  <strong>CSMPN warnings</strong>
-                  <ul>{csmpnWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
-                </div>
-              )}
-
-              {chordProDiagnostics && (
-                <div className="hint-text">
-                  {chordProDiagnostics.xmlIntake && (
-                    <p>
-                      <span
-                        className={`reducibility-badge reducibility-badge--${chordProDiagnostics.xmlIntake.reducibilityClass}`}
-                        title={chordProDiagnostics.xmlIntake.reasons.join(' · ') || undefined}
-                      >
-                        {chordProDiagnostics.xmlIntake.reducibilityLabel}
-                        {' '}({chordProDiagnostics.xmlIntake.reducibilityScore}/100)
-                      </span>
-                    </p>
-                  )}
-                  <p>
-                    Resolved mode: <strong>{chordProDiagnostics.formatModeResolved}</strong>
-                    {' · '}Measures: {chordProDiagnostics.measuresCount}
-                    {chordProDiagnostics.harmoniesCollected !== undefined &&
-                      <> · Harmonies: {chordProDiagnostics.harmoniesCollected}
-                        {chordProDiagnostics.inferredHarmoniesCount !== undefined &&
-                          <em> (inferred from text)</em>}
-                      </>}
-                    {chordProDiagnostics.enharmonicStyleApplied &&
-                      <> · enh: {chordProDiagnostics.enharmonicStyleApplied}</>}
-                    {chordProDiagnostics.scoreFormat === 'timewise-converted' &&
-                      <> · <em>score-timewise converted</em></>}
-                  </p>
-                  {chordProDiagnostics.partsInfo && chordProDiagnostics.partsInfo.length > 1 && (
-                    <p>
-                      Parts:{' '}
-                      {chordProDiagnostics.partsInfo.map((p) => (
-                        <span key={p.id} style={{ marginRight: '0.75em' }}>
-                          <strong>{p.name}</strong> ({p.harmonyCount}♩ {p.lyricCount}📝)
-                        </span>
-                      ))}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <h2>Export</h2>
-              <label className="export-label" htmlFor="pdf-page-size">PDF Page Size</label>
-              <select id="pdf-page-size" value={pdfPageSize}
-                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
-                disabled={!canExportNotation}>
-                <option value="letter">Letter (Portrait)</option>
-                <option value="a4">A4 (Portrait)</option>
-              </select>
-
-              <div className="export-actions">
-                <button type="button" onClick={downloadXml} disabled={!canExportNotation}>
-                  Download XML
-                </button>
-                <button type="button" onClick={downloadDiagnostics} disabled={!canExportNotation}>
-                  Download Diagnostics JSON
-                </button>
-                <button type="button" onClick={exportSvg} disabled={!canExportNotation}>
-                  Export SVG (all pages)
-                </button>
-                <button type="button" onClick={() => void exportPng()} disabled={!canExportNotation}>
-                  Export PNG (all pages)
-                </button>
-                <button type="button" onClick={() => void exportPdf()} disabled={!canExportNotation}>
-                  Generate PDF
-                </button>
-                {renderedPageCount > 6 && (
-                  <button type="button" onClick={() => void exportPdf(1)} disabled={!canExportNotation}>
-                    Export PDF (First Page)
-                  </button>
-                )}
-                <button type="button" onClick={printScore} disabled={renderedPageCount === 0}>
-                  Print / Save as PDF
-                </button>
-              </div>
-
-              {pdfBlobUrl && (
-                <div className="pdf-ready-box">
-                  <p className="pdf-ready-title">PDF Ready</p>
-                  <div className="pdf-ready-actions">
-                    <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
-                      Open PDF
-                    </a>
-                    <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
-                    {canSharePdf && (
-                      <button type="button" onClick={() => void sharePdf()}>Share PDF</button>
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Diagnostics</h2>
+                {diagnostics ? (
+                  <ul>
+                    <li><strong>File:</strong> {loadedFilename || 'n/a'}</li>
+                    <li><strong>Root:</strong> {diagnostics.rootName}</li>
+                    <li><strong>Version:</strong> {diagnostics.version}</li>
+                    {!diagnostics.isValidXml && diagnostics.parseError && (
+                      <li><strong>Parse error:</strong> {diagnostics.parseError}</li>
                     )}
-                    <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                    <li><strong>Parts:</strong> {diagnostics.parts}</li>
+                    <li><strong>Measures:</strong> {diagnostics.measures}</li>
+                    <li><strong>Notes:</strong> {diagnostics.notes}</li>
+                    <li><strong>Harmonies:</strong> {diagnostics.harmonies}</li>
+                    <li><strong>Has key:</strong> {diagnostics.hasKey ? 'yes' : 'no'}</li>
+                    <li><strong>Has time:</strong> {diagnostics.hasTime ? 'yes' : 'no'}</li>
+                    <li><strong>Has divisions:</strong> {diagnostics.hasDivisions ? 'yes' : 'no'}</li>
+                    <li><strong>Source type:</strong> {isMxl ? 'MXL archive' : 'XML text'}</li>
+                  </ul>
+                ) : (
+                  <p>No file loaded.</p>
+                )}
+                {xmlWarnings.length > 0 && (
+                  <div className="warning-block">
+                    <strong>Warnings</strong>
+                    <ul>{xmlWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
                   </div>
+                )}
+              </div>
+
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>ChordPro Export</h2>
+                <div className="chordpro-options-grid">
+                  <label className="export-label" htmlFor="chordpro-bars">Bars per line</label>
+                  <input
+                    id="chordpro-bars" type="number" min={1} max={16}
+                    value={chordProUi.barsPerLine}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setChordProUi((p) => ({ ...p, barsPerLine: Number.isFinite(v) ? Math.max(1, Math.min(16, v)) : p.barsPerLine }));
+                    }}
+                  />
+                  <label className="export-label" htmlFor="chordpro-mode">Mode</label>
+                  <select id="chordpro-mode" value={chordProUi.mode}
+                    onChange={(e) => setChordProUi((p) => ({ ...p, mode: e.target.value as ChordProModeUi }))}>
+                    <option value="auto">Auto</option>
+                    <option value="lyrics-inline">Lyrics Inline</option>
+                    <option value="grid-only">Grid Only</option>
+                    <option value="fakebook">Fake Book</option>
+                  </select>
+                  <label className="export-label" htmlFor="chordpro-brackets">Chord bracket style</label>
+                  <select id="chordpro-brackets" value={chordProUi.chordBracketStyle}
+                    onChange={(e) => setChordProUi((p) => ({ ...p, chordBracketStyle: e.target.value as ChordProBracketUi }))}>
+                    <option value="separate">Separate</option>
+                    <option value="combined">Combined</option>
+                  </select>
+                  <label className="export-label" htmlFor="chordpro-repeat">Repeat</label>
+                  <select id="chordpro-repeat" value={chordProUi.repeatStrategy}
+                    onChange={(e) => setChordProUi((p) => ({ ...p, repeatStrategy: e.target.value as ChordProRepeatUi }))}>
+                    <option value="none">None</option>
+                    <option value="simple-unroll">Simple Unroll</option>
+                  </select>
+                  <label className="export-label" htmlFor="chordpro-enharmonic">Enharmonic</label>
+                  <select id="chordpro-enharmonic" value={chordProUi.enharmonicStyle}
+                    onChange={(e) => setChordProUi((p) => ({ ...p, enharmonicStyle: e.target.value as ChordProEnharmonicUi }))}>
+                    <option value="auto">Auto (key-based)</option>
+                    <option value="flats">Prefer flats</option>
+                    <option value="sharps">Prefer sharps</option>
+                  </select>
+                  <label className="export-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
+                    <input type="checkbox" checked={chordProUi.jazzSymbols}
+                      onChange={(e) => setChordProUi((p) => ({ ...p, jazzSymbols: e.target.checked }))} />
+                    Jazz symbols (Δ7 ø7 °7)
+                  </label>
                 </div>
-              )}
+
+                <div className="export-actions">
+                  <button type="button" className="btn-primary" onClick={() => void generateChordPro()} disabled={!canExportNotation}>
+                    Generate ChordPro
+                  </button>
+                  <button type="button" onClick={() => void generateCsmpnFakeBook()} disabled={!canExportNotation}>
+                    Generate CSMPN
+                  </button>
+                  <button type="button" onClick={() => void copyChordPro(chordProText)} disabled={!chordProText}>
+                    Copy
+                  </button>
+                  <button type="button" onClick={() => downloadChordProText(chordProText, deriveProFilename(loadedFilename))} disabled={!chordProText}>
+                    Download .pro
+                  </button>
+                  {canShare && (
+                    <button type="button" onClick={() => void shareText(chordProText, deriveProFilename(loadedFilename))} disabled={!chordProText}>
+                      Share
+                    </button>
+                  )}
+                </div>
+
+                <textarea
+                  className="chordpro-output"
+                  value={chordProText}
+                  placeholder="Generated ChordPro will appear here..."
+                  wrap="off" spellCheck={false} readOnly
+                />
+
+                {chordProWarnings.length > 0 && (
+                  <div className="warning-block">
+                    <strong>ChordPro warnings</strong>
+                    <ul>{chordProWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
+                  </div>
+                )}
+
+                {chordProDiagnostics && (
+                  <div className="hint-text">
+                    {chordProDiagnostics.xmlIntake && (
+                      <p>
+                        <span
+                          className={`reducibility-badge reducibility-badge--${chordProDiagnostics.xmlIntake.reducibilityClass}`}
+                          title={chordProDiagnostics.xmlIntake.reasons.join(' · ') || undefined}
+                        >
+                          {chordProDiagnostics.xmlIntake.reducibilityLabel}
+                          {' '}({chordProDiagnostics.xmlIntake.reducibilityScore}/100)
+                        </span>
+                      </p>
+                    )}
+                    <p>
+                      Mode: <strong>{chordProDiagnostics.formatModeResolved}</strong>
+                      {' · '}Measures: {chordProDiagnostics.measuresCount}
+                      {chordProDiagnostics.harmoniesCollected !== undefined &&
+                        <> · {chordProDiagnostics.harmoniesCollected} chords
+                          {chordProDiagnostics.inferredHarmoniesCount !== undefined &&
+                            <em> (inferred)</em>}
+                        </>}
+                      {chordProDiagnostics.scoreFormat === 'timewise-converted' &&
+                        <> · <em>timewise converted</em></>}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>CSMPN Source</h2>
+                <div className="export-actions">
+                  <button type="button" onClick={() => void copyChordPro(csmpnFakeBookText)} disabled={!csmpnFakeBookText}>
+                    Copy CSMPN
+                  </button>
+                  <button type="button" onClick={() => downloadChordProText(csmpnFakeBookText, `${baseName}.csmpn.txt`)} disabled={!csmpnFakeBookText}>
+                    Download .txt
+                  </button>
+                  {canShare && (
+                    <button type="button" onClick={() => void shareText(csmpnFakeBookText, `${baseName}.csmpn.txt`)} disabled={!csmpnFakeBookText}>
+                      Share
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  className="chordpro-output"
+                  value={csmpnFakeBookText}
+                  placeholder="Generated CSMPN fake-book source will appear here..."
+                  wrap="off" spellCheck={false} readOnly
+                />
+                {csmpnWarnings.length > 0 && (
+                  <div className="warning-block">
+                    <strong>CSMPN warnings</strong>
+                    <ul>{csmpnWarnings.map((w) => <li key={w}>{w}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Export</h2>
+                <label className="export-label" htmlFor="pdf-page-size">PDF Page Size</label>
+                <select id="pdf-page-size" value={pdfPageSize}
+                  onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                  disabled={!canExportNotation}>
+                  <option value="letter">Letter (Portrait)</option>
+                  <option value="a4">A4 (Portrait)</option>
+                </select>
+
+                <div className="export-actions">
+                  <button type="button" className="btn-primary" onClick={() => void exportPdf()} disabled={!canExportNotation}>
+                    Generate PDF
+                  </button>
+                  <button type="button" onClick={printScore} disabled={renderedPageCount === 0}>
+                    Print / Save as PDF
+                  </button>
+                  {renderedPageCount > 6 && (
+                    <button type="button" onClick={() => void exportPdf(1)} disabled={!canExportNotation}>
+                      PDF (First Page)
+                    </button>
+                  )}
+                  <button type="button" onClick={exportSvg} disabled={!canExportNotation}>
+                    Export SVG
+                  </button>
+                  <button type="button" onClick={() => void exportPng()} disabled={!canExportNotation}>
+                    Export PNG
+                  </button>
+                  <button type="button" onClick={downloadXml} disabled={!canExportNotation}>
+                    Download XML
+                  </button>
+                  <button type="button" onClick={downloadDiagnostics} disabled={!canExportNotation}>
+                    Download Diagnostics
+                  </button>
+                </div>
+
+                {pdfBlobUrl && (
+                  <div className="pdf-ready-box">
+                    <p className="pdf-ready-title">PDF Ready</p>
+                    <div className="pdf-ready-actions">
+                      <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
+                        Open PDF
+                      </a>
+                      <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
+                      {canSharePdf && (
+                        <button type="button" onClick={() => void sharePdf()}>Share PDF</button>
+                      )}
+                      <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
           {/* ── Tablature mode panel ── */}
           {appMode === 'tablature' && tabScoreData && (
             <>
-              <h2>Tab Settings</h2>
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Tab Settings</h2>
 
-              <label className="export-label" htmlFor="tab-tuning-preset">Tuning preset</label>
-              <select
-                id="tab-tuning-preset"
-                value={tabTuningPreset}
-                onChange={(e) => {
-                  const preset = e.target.value;
-                  setTabTuningPreset(preset);
-                  const strings = TUNING_PRESETS[preset];
-                  if (strings) setTabTuning(strings);
-                }}
-              >
-                {Object.keys(TUNING_PRESETS).map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
+                <label className="export-label" htmlFor="tab-tuning-preset">Tuning preset</label>
+                <select
+                  id="tab-tuning-preset"
+                  value={tabTuningPreset}
+                  onChange={(e) => {
+                    const preset = e.target.value;
+                    setTabTuningPreset(preset);
+                    const strings = TUNING_PRESETS[preset];
+                    if (strings) setTabTuning(strings);
+                  }}
+                >
+                  {Object.keys(TUNING_PRESETS).map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
 
-              <label className="export-label">Custom tuning (high→low, one per box)</label>
-              <div className="tab-tuning-grid">
-                {tabTuning.map((note, i) => (
+                <label className="export-label">Custom tuning (high→low)</label>
+                <div className="tab-tuning-grid">
+                  {tabTuning.map((note, i) => (
+                    <input
+                      key={i}
+                      type="text"
+                      className="tab-tuning-input"
+                      value={note}
+                      aria-label={`String ${i + 1}`}
+                      onChange={(e) => {
+                        const next = [...tabTuning];
+                        next[i] = e.target.value;
+                        setTabTuning(next);
+                        setTabTuningPreset('Custom');
+                      }}
+                    />
+                  ))}
+                </div>
+
+                {tabScoreData.parts.length > 1 && (
+                  <>
+                    <label className="export-label" htmlFor="tab-part">Part</label>
+                    <select
+                      id="tab-part"
+                      value={tabPartIndex}
+                      onChange={(e) => setTabPartIndex(Number(e.target.value))}
+                    >
+                      {tabScoreData.parts.map((p, i) => (
+                        <option key={p.id} value={i}>{p.name}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+
+                <div className="tab-settings-row">
+                  <label className="export-label" htmlFor="tab-font-size">
+                    Font size: {tabFontSize}px
+                  </label>
                   <input
-                    key={i}
-                    type="text"
-                    className="tab-tuning-input"
-                    value={note}
-                    aria-label={`String ${i + 1}`}
-                    onChange={(e) => {
-                      const next = [...tabTuning];
-                      next[i] = e.target.value;
-                      setTabTuning(next);
-                      setTabTuningPreset('Custom');
-                    }}
+                    id="tab-font-size"
+                    type="range"
+                    min={8}
+                    max={20}
+                    value={tabFontSize}
+                    onChange={(e) => setTabFontSize(Number(e.target.value))}
+                    className="tab-range"
                   />
-                ))}
-              </div>
-
-              {tabScoreData.parts.length > 1 && (
-                <>
-                  <label className="export-label" htmlFor="tab-part">Part</label>
-                  <select
-                    id="tab-part"
-                    value={tabPartIndex}
-                    onChange={(e) => setTabPartIndex(Number(e.target.value))}
-                  >
-                    {tabScoreData.parts.map((p, i) => (
-                      <option key={p.id} value={i}>{p.name}</option>
-                    ))}
-                  </select>
-                </>
-              )}
-
-              <div className="tab-settings-row">
-                <label className="export-label" htmlFor="tab-font-size">
-                  Font size: {tabFontSize}px
-                </label>
-                <input
-                  id="tab-font-size"
-                  type="range"
-                  min={8}
-                  max={20}
-                  value={tabFontSize}
-                  onChange={(e) => setTabFontSize(Number(e.target.value))}
-                  className="tab-range"
-                />
-              </div>
-
-              <div className="tab-settings-row">
-                <label className="export-label" htmlFor="tab-mpr">
-                  Measures per row: {tabMeasuresPerRow}
-                </label>
-                <input
-                  id="tab-mpr"
-                  type="range"
-                  min={1}
-                  max={8}
-                  value={tabMeasuresPerRow}
-                  onChange={(e) => setTabMeasuresPerRow(Number(e.target.value))}
-                  className="tab-range"
-                />
-              </div>
-
-              {tabScoreData.warnings.length > 0 && (
-                <div className="warning-block">
-                  <strong>Tab warnings</strong>
-                  <ul>{tabScoreData.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
                 </div>
-              )}
 
-              <h2>Export Tab</h2>
-              <label className="export-label" htmlFor="tab-pdf-size">PDF Page Size</label>
-              <select
-                id="tab-pdf-size"
-                value={pdfPageSize}
-                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
-                disabled={!canExportTab}
-              >
-                <option value="letter">Letter (Portrait)</option>
-                <option value="a4">A4 (Portrait)</option>
-              </select>
-              <div className="export-actions">
-                <button type="button" onClick={exportTabSvg} disabled={!canExportTab}>
-                  Export Tab SVG
-                </button>
-                <button type="button" onClick={() => void exportTabPng()} disabled={!canExportTab}>
-                  Export Tab PNG
-                </button>
-                <button type="button" onClick={() => void exportTabPdf()} disabled={!canExportTab}>
-                  Generate Tab PDF
-                </button>
-              </div>
+                <div className="tab-settings-row">
+                  <label className="export-label" htmlFor="tab-mpr">
+                    Measures per row: {tabMeasuresPerRow}
+                  </label>
+                  <input
+                    id="tab-mpr"
+                    type="range"
+                    min={1}
+                    max={8}
+                    value={tabMeasuresPerRow}
+                    onChange={(e) => setTabMeasuresPerRow(Number(e.target.value))}
+                    className="tab-range"
+                  />
+                </div>
 
-              {pdfBlobUrl && (
-                <div className="pdf-ready-box">
-                  <p className="pdf-ready-title">PDF Ready</p>
-                  <div className="pdf-ready-actions">
-                    <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
-                      Open PDF
-                    </a>
-                    <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
-                    <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                {tabScoreData.warnings.length > 0 && (
+                  <div className="warning-block">
+                    <strong>Tab warnings</strong>
+                    <ul>{tabScoreData.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
                   </div>
+                )}
+              </div>
+
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Export Tab</h2>
+                <label className="export-label" htmlFor="tab-pdf-size">PDF Page Size</label>
+                <select
+                  id="tab-pdf-size"
+                  value={pdfPageSize}
+                  onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                  disabled={!canExportTab}
+                >
+                  <option value="letter">Letter (Portrait)</option>
+                  <option value="a4">A4 (Portrait)</option>
+                </select>
+                <div className="export-actions">
+                  <button type="button" className="btn-primary" onClick={() => void exportTabPdf()} disabled={!canExportTab}>
+                    Generate PDF
+                  </button>
+                  <button type="button" onClick={exportTabSvg} disabled={!canExportTab}>
+                    Export SVG
+                  </button>
+                  <button type="button" onClick={() => void exportTabPng()} disabled={!canExportTab}>
+                    Export PNG
+                  </button>
                 </div>
-              )}
+
+                {pdfBlobUrl && (
+                  <div className="pdf-ready-box">
+                    <p className="pdf-ready-title">PDF Ready</p>
+                    <div className="pdf-ready-actions">
+                      <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
+                        Open PDF
+                      </a>
+                      <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
+                      <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
           {/* ── AlphaTab mode panel ── */}
           {appMode === 'alphatab' && (loadedXmlText || gpFileBuffer) && (
             <>
-              <AlphaTabControls
-                settings={alphaTabSettings}
-                parts={
-                  gpFileBuffer
-                    ? gpTracks.map((name, i) => ({ id: String(i), name }))
-                    : (tabScoreData?.parts ?? [])
-                }
-                onSettingsChange={setAlphaTabSettings}
-              />
+              <div className="panel-section">
+                <AlphaTabControls
+                  settings={alphaTabSettings}
+                  parts={
+                    gpFileBuffer
+                      ? gpTracks.map((name, i) => ({ id: String(i), name }))
+                      : (tabScoreData?.parts ?? [])
+                  }
+                  onSettingsChange={setAlphaTabSettings}
+                />
+              </div>
 
               {/* GP ChordPro extraction */}
               {gpFileBuffer && gpChordProText && (
-                <>
-                  <h2>Extracted Chords</h2>
+                <div className="panel-section">
+                  <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Extracted Chords</h2>
                   {gpChordProWarnings.map((w, i) => (
                     <p key={i} className="warning-block">{w}</p>
                   ))}
@@ -2621,6 +2618,7 @@ export default function App() {
                   />
                   <button
                     type="button"
+                    style={{ marginTop: '0.5rem' }}
                     onClick={() => {
                       const blob = new Blob([gpChordProText], { type: 'text/plain' });
                       const base = loadedFilename.replace(/\.[^.]+$/, '');
@@ -2629,56 +2627,64 @@ export default function App() {
                   >
                     Download ChordPro
                   </button>
-                </>
+                </div>
               )}
 
-              <h2>Export AlphaTab</h2>
-              <label className="export-label" htmlFor="alphatab-pdf-size">PDF / Print Page Size</label>
-              <select
-                id="alphatab-pdf-size"
-                value={pdfPageSize}
-                onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
-                disabled={!canExportAlphaTab}
-              >
-                <option value="letter">Letter (Portrait)</option>
-                <option value="a4">A4 (Portrait)</option>
-              </select>
-              <p className="export-hint">Print uses notation + tablature, portrait layout, 15mm top margin, and 10mm side/bottom margins for iPhone/iPad Save to PDF.</p>
-              <div className="export-actions">
-                <button type="button" onClick={exportAlphaTabSvg} disabled={!canExportAlphaTab}>
-                  Export SVG
-                </button>
-                <button type="button" onClick={() => void exportAlphaTabPng()} disabled={!canExportAlphaTab}>
-                  Export PNG
-                </button>
-                <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
-                  Generate PDF
-                </button>
-                <button type="button" onClick={printAlphaTab} disabled={!canExportAlphaTab || alphaTabPrintPending}>
-                  {alphaTabPrintPending ? 'Preparing Print…' : 'Print / Save PDF'}
-                </button>
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Export</h2>
+                <label className="export-label" htmlFor="alphatab-pdf-size">PDF / Print Page Size</label>
+                <select
+                  id="alphatab-pdf-size"
+                  value={pdfPageSize}
+                  onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                  disabled={!canExportAlphaTab}
+                >
+                  <option value="letter">Letter (Portrait)</option>
+                  <option value="a4">A4 (Portrait)</option>
+                </select>
+                <p className="export-hint">Portrait layout, 15mm top / 10mm side margins — optimised for iPhone/iPad Save to PDF.</p>
+                <div className="export-actions">
+                  <button type="button" className="btn-primary" onClick={printAlphaTab} disabled={!canExportAlphaTab || alphaTabPrintPending}>
+                    {alphaTabPrintPending ? 'Preparing…' : 'Print / Save PDF'}
+                  </button>
+                  <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
+                    Generate PDF
+                  </button>
+                  <button type="button" onClick={exportAlphaTabSvg} disabled={!canExportAlphaTab}>
+                    Export SVG
+                  </button>
+                  <button type="button" onClick={() => void exportAlphaTabPng()} disabled={!canExportAlphaTab}>
+                    Export PNG
+                  </button>
+                </div>
               </div>
 
-              <FretboardPositionsPanel
-                notePositions={alphaTabNotePositions}
-                stringCount={
-                  gpFileBuffer
-                    ? (alphaTabNotePositions[0]?.positions.length
-                        ? Math.max(...alphaTabNotePositions.flatMap(n => n.positions.map(p => p.str)))
-                        : 6)
-                    : tabTuning.length
-                }
-              />
+              <div className="panel-section">
+                <FretboardPositionsPanel
+                  notePositions={alphaTabNotePositions}
+                  stringCount={
+                    gpFileBuffer
+                      ? (alphaTabNotePositions[0]?.positions.length
+                          ? Math.max(...alphaTabNotePositions.flatMap(n => n.positions.map(p => p.str)))
+                          : 6)
+                      : tabTuning.length
+                  }
+                />
+              </div>
             </>
           )}
 
-          {/* ── Empty state ── */}
+          {/* ── Empty state panel ── */}
           {appMode === 'empty' && (
-            <p>Upload a file to get started.</p>
+            <div className="panel-section">
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: 0 }}>Open a file to see options here.</p>
+            </div>
           )}
 
           {exportFeedback && (
-            <p className={`export-feedback ${exportFeedback.type}`}>{exportFeedback.message}</p>
+            <div className="panel-section" style={{ borderTop: '1px solid var(--border-muted)' }}>
+              <p className={`export-feedback ${exportFeedback.type}`} style={{ margin: 0 }}>{exportFeedback.message}</p>
+            </div>
           )}
         </aside>
       </main>
