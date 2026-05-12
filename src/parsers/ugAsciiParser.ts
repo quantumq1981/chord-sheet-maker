@@ -84,6 +84,14 @@ const IS_CHORD_TOKEN_RE =
 /** Section markers: [Verse 1], [Chorus], etc. */
 const SECTION_MARKER_RE = /^\[([^\]]+)\]$/;
 
+/** Non-chord filler tokens to ignore during chord detection (repeat/no-chord markers). */
+const SKIP_TOKENS = new Set(['%', 'N.C.', 'NC', 'N/A']);
+
+/** Strip bar-separator pipes so pipe-grid chord lines (|Chord |Chord |...) are tokenized correctly. */
+function stripGridSyntax(line: string): string {
+  return line.replace(/\|/g, ' ');
+}
+
 // ─── Line classification ──────────────────────────────────────────────────────
 
 /**
@@ -100,20 +108,23 @@ export function isTabLine(line: string): boolean {
 }
 
 /**
- * Returns true when at least 40% of the whitespace-delimited tokens in the
- * line look like chord symbols AND there is at least one chord token.
- * Uses IS_CHORD_TOKEN_RE (non-global) for safe .test() calls.
+ * Returns true when at least 40% of the non-filler tokens look like chord
+ * symbols AND there is at least one chord token.
+ * Strips bar-separator pipes first so pipe-grid format (|Chord |Chord |...) is
+ * handled correctly. Uses IS_CHORD_TOKEN_RE (non-global) for safe .test() calls.
  */
 export function isChordLine(line: string): boolean {
-  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  const tokens = stripGridSyntax(line).trim().split(/\s+/)
+    .filter((t) => t.length > 0 && !SKIP_TOKENS.has(t));
   if (tokens.length === 0) return false;
   const chordCount = tokens.filter((t) => IS_CHORD_TOKEN_RE.test(t)).length;
   return chordCount >= 1 && chordCount / tokens.length >= 0.4;
 }
 
-/** Extract all chord-looking tokens from a line (order preserved). */
+/** Extract all chord-looking tokens from a line (order preserved). Strips pipes and skips repeat markers. */
 function findChordsInLine(line: string): string[] {
-  return line.trim().split(/\s+/).filter((t) => IS_CHORD_TOKEN_RE.test(t));
+  return stripGridSyntax(line).trim().split(/\s+/)
+    .filter((t) => !SKIP_TOKENS.has(t) && IS_CHORD_TOKEN_RE.test(t));
 }
 
 // ─── Quality table ────────────────────────────────────────────────────────────
@@ -309,7 +320,7 @@ export function computeDensities(
   let lyricCount = 0;
   let tabCount = 0;
   let chordTokenTotal = 0;
-  let gridSymbolTotal = 0;
+  let gridLineCount = 0;
   let sectionCount = 0;
 
   for (let i = 0; i < total; i++) {
@@ -320,9 +331,10 @@ export function computeDensities(
     if (SECTION_MARKER_RE.test(t)) { sectionCount++; continue; }
     if (isChordFlags[i]) {
       chordTokenTotal += findChordsInLine(line).length;
+      // Track pipe-bar-grid chord lines separately for gridDensity
+      if (line.includes('|')) gridLineCount++;
       continue;
     }
-    gridSymbolTotal += (line.match(/[|.:]/g) ?? []).length;
     if (t.length > 0) lyricCount++;
   }
 
@@ -330,7 +342,7 @@ export function computeDensities(
     lyricDensity:    lyricCount    / total,
     tabDensity:      tabCount      / total,
     chordDensity:    chordTokenTotal / total,
-    gridDensity:     gridSymbolTotal / total,
+    gridDensity:     gridLineCount  / total,
     sectionDensity:  sectionCount  / total,
   };
 }
@@ -425,28 +437,38 @@ export function guessGenre(
   densities: DensityMetrics,
   capoFret: number | null,
 ): GenreGuess {
-  // The lyric-sparsity term (jazz charts tend to have no lyrics) only fires when
-  // there is at least some harmonic jazz evidence; otherwise zero-input gets a
-  // spurious jazz score of 2.0 solely from (1 - 0) lyricDensity.
+  // Full harmonic jazz evidence (includes dom7 which is also common in blues).
   const jazzHarmonicSignal =
     6 * hf.min7b5Rate + 6 * hf.altRate + 5 * hf.maj7Rate + 4 * hf.dom7Rate + 4 * hf.iiVRate;
+  // Specifically-jazz harmonic signal: excludes dom7 so that blues songs with dominant
+  // 7ths don't trigger the lyric-sparsity bonus (dom7 alone ≠ jazz).
+  const jazzSpecificSignal =
+    6 * hf.min7b5Rate + 6 * hf.altRate + 5 * hf.maj7Rate + 4 * hf.iiVRate;
   const jazzScore =
     jazzHarmonicSignal +
     2 * densities.gridDensity +
-    (jazzHarmonicSignal > 0 ? 2 * (1 - densities.lyricDensity) : 0);
+    (jazzSpecificSignal >= 1.0 ? 2 * (1 - densities.lyricDensity) : 0);
 
+  // lyricDensity term: blues songs typically have lyrics; this helps distinguish
+  // lyric-heavy blues from jazz when both have similar dom7 rates.
+  // dom7Rate coefficient raised to 5 so that heavy dominant-7 usage (blues)
+  // scores decisively over folk/pop when both have lyrics.
   const rockBluesScore =
     5 * hf.powerChordRate +
-    4 * hf.dom7Rate +
+    5 * hf.dom7Rate +
     3 * densities.tabDensity +
-    2 * hf.iiVRate;
+    2 * hf.iiVRate +
+    densities.lyricDensity;
 
-  // Bug #2 fix: simpleMajMinRate + capo replaces the erroneous powerChordRate term
+  // Bug #2 fix: simpleMajMinRate + capo replaces the erroneous powerChordRate term.
+  // dom7Rate penalty: dominant 7ths are a blues/rock signal, not folk/pop — prevents
+  // blues songs with simple triad fills from being misclassified as folk/pop.
   const folkPopScore =
     5 * hf.cowboyChordShare +
     4 * densities.lyricDensity +
     3 * hf.simpleMajMinRate +
-    2 * (capoFret !== null ? 1 : 0);
+    2 * (capoFret !== null ? 1 : 0) -
+    3 * hf.dom7Rate;
 
   const scores = { jazz: jazzScore, rock_blues: rockBluesScore, folk_pop: folkPopScore };
   const sorted = (Object.entries(scores) as Array<[string, number]>).sort((a, b) => b[1] - a[1]);
