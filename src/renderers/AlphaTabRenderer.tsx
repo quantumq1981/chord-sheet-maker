@@ -103,6 +103,11 @@ export default function AlphaTabRenderer({
       (s.display as alphaTab.DisplaySettings).barsPerRow = uiSettings.display.barsPerRow;
     }
     (s.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
+    const semitones = uiSettings.transposeSemitones ?? 0;
+    if (semitones !== 0) {
+      // Fill all 128 possible track slots so every track in the file gets the same offset.
+      s.notation.transpositionPitches = new Array(128).fill(semitones);
+    }
     return s;
   }, [baseUrl, fontDir, uiSettings]);
 
@@ -322,19 +327,22 @@ export default function AlphaTabRenderer({
   const prevBarsRef = useRef(uiSettings.display.barsPerRow);
   const prevScaleRef = useRef(uiSettings.display.scale);
   const prevPrintProfileRef = useRef(uiSettings.printProfile);
+  const prevTransposeRef = useRef(uiSettings.transposeSemitones);
   useEffect(() => {
     const staveChanged = prevStaveRef.current !== uiSettings.display.staveProfile;
     const layoutChanged = prevLayoutRef.current !== uiSettings.display.layoutMode;
     const barsChanged = prevBarsRef.current !== uiSettings.display.barsPerRow;
     const scaleChanged = prevScaleRef.current !== uiSettings.display.scale;
     const printProfileChanged = prevPrintProfileRef.current !== uiSettings.printProfile;
+    const transposeChanged = prevTransposeRef.current !== uiSettings.transposeSemitones;
     prevStaveRef.current = uiSettings.display.staveProfile;
     prevLayoutRef.current = uiSettings.display.layoutMode;
     prevBarsRef.current = uiSettings.display.barsPerRow;
     prevScaleRef.current = uiSettings.display.scale;
     prevPrintProfileRef.current = uiSettings.printProfile;
+    prevTransposeRef.current = uiSettings.transposeSemitones;
 
-    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged || printProfileChanged)) return;
+    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged || printProfileChanged || transposeChanged)) return;
     if (!containerRef.current) return;
 
     clearRenderTimer();
@@ -348,7 +356,8 @@ export default function AlphaTabRenderer({
       loadData(api, fileData, uiSettings.partIndex);
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      uiSettings.display.scale, uiSettings.printProfile, fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
+      uiSettings.display.scale, uiSettings.printProfile, uiSettings.transposeSemitones,
+      fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {
@@ -360,7 +369,10 @@ export default function AlphaTabRenderer({
   return (
     <div className="alphatab-wrapper">
       {status === 'loading' && (
-        <div className="alphatab-loading">Rendering score…</div>
+        <div className="alphatab-loading">
+          <span className="alphatab-loading__spinner" aria-hidden="true" />
+          Rendering score…
+        </div>
       )}
       {status === 'error' && (
         <div className="alphatab-error">{errorMsg}</div>

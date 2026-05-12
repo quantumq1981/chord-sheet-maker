@@ -18,4 +18,7 @@ export interface AlphaTabUiSettings {
   partIndex: number;
   /** Temporary calibrated print profile for iOS/Safari Print → Save PDF. */
   printProfile?: boolean;
+  /** Semitone offset applied via notation.transpositionPitches (GP files only).
+   *  MusicXML files use the transposeMusicXML() XML-level path instead. */
+  transposeSemitones?: number;
 }

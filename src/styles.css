@@ -1031,6 +1031,25 @@ select:disabled {
   z-index: 10;
   pointer-events: none;
   box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+@keyframes at-spin {
+  to { transform: rotate(360deg); }
+}
+
+.alphatab-loading__spinner {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: at-spin 0.7s linear infinite;
 }
 
 .alphatab-error {

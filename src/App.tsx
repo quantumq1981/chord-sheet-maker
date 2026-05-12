@@ -801,6 +801,14 @@ export default function App() {
     setTransposeWarnings(warnings);
   }, [pristineXmlText, transposeSemitones, transposeEnharmonic]);
 
+  // GP files: wire transpose semitones into AlphaTab settings so the renderer
+  // re-applies notation.transpositionPitches and re-renders.
+  // MusicXML files use transposeMusicXML() at the XML level instead.
+  useEffect(() => {
+    if (!gpFileBuffer) return;
+    setAlphaTabSettings((prev) => ({ ...prev, transposeSemitones }));
+  }, [transposeSemitones, gpFileBuffer]);
+
   // ── OSMD initialisation ──
   useEffect(() => {
     if (!containerRef.current || osmdRef.current) return;
