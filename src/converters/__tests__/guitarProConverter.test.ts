@@ -165,7 +165,7 @@ describe('gpScoreToChordPro', () => {
   it('accepts known chord name formats in beat.text', () => {
     // AB9 is a chord diagram name (beat.chord.name) from real GP files — it is
     // always passed through unchanged. Here we only test beat.text filtering.
-    const chordNames = ['C', 'Dm', 'G7', 'F#m7', 'Bb', 'Ebm', 'E7', 'Cmaj7', 'D7M'];
+    const chordNames = ['C', 'Dm', 'G7', 'F#m7', 'Bb', 'Ebm', 'E7', 'Cmaj7', 'D7M', 'C/E', 'G/B', 'EØ'];
     for (const name of chordNames) {
       const score = makeScore({
         tracks: [makeTrack([makeStaff([makeBar([makeVoice([makeBeat({ text: name })])])])])],

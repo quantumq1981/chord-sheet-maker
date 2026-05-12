@@ -21,10 +21,18 @@ export interface GpChordProResult {
   warnings: string[];
 }
 
-// Matches strings that look like chord names: start with A–G, followed by
-// optional accidentals and standard suffix tokens, no spaces.
-// Examples: C, Dm, G7, F#m7, Bb13, Cmaj7, EØ, F#m7b5, C/E, AB9, D7M
-const CHORD_TEXT_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus[24]?|add|[°ø+ΔmM]|[0-9]+|[#b][0-9]*|\/[A-G][#b]?|[()])*$/;
+// Matches strings that look like chord names: A–G root, optional accidental,
+// then up to 12 suffix characters from the standard chord-symbol alphabet.
+//
+// A flat character-class suffix (no nested quantifiers, no alternation) is
+// used to avoid the ReDoS risk that arises when alternations containing `+`
+// quantifiers are nested inside a `*` loop.
+//
+// Accepted suffix chars cover: quality letters (m M a j d i n u g s),
+// special symbols (° ø Ø + Δ), accidentals in alteration context (# b),
+// bass-note roots for slash chords (A-G), digits (0-9), and grouping (/ ()).
+// Examples matched: C, Dm, G7, F#m7, Bb13, Cmaj7, EØ, F#m7b5, C/E, D7M
+const CHORD_TEXT_RE = /^[A-G][#b]?[mMajdinugs°øØ+Δ#bA-G0-9/()]{0,12}$/;
 
 function looksLikeChordName(text: string): boolean {
   const t = text.trim();
