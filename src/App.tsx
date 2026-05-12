@@ -1883,6 +1883,27 @@ export default function App() {
     }
   }, [canSharePdf, pdfBlobUrl, pdfFilename, showExportError, showExportSuccess]);
 
+  // ── GP → Chord Chart: load extracted ChordPro text into chord-chart mode ──
+  const loadGpAsChordChart = useCallback(() => {
+    if (!gpChordProText) return;
+    const doc = parseChordChart(gpChordProText, 'chordpro');
+    const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi, transposeEnharmonic);
+    setChartDocument(doc);
+    setDetectedFormatLabel('Guitar Pro (ChordPro)');
+    setChartChordProText(chartExport.text);
+    setChartChordProWarnings([...gpChordProWarnings, ...chartExport.warnings]);
+    setLoadedXmlText('');
+    setPristineXmlText('');
+    setIsMxl(false);
+    setRenderedPageCount(0);
+    setRenderError('');
+    setExportFeedback(null);
+    setAppMode('chord-chart');
+  }, [gpChordProText, gpChordProWarnings, transposeSemitones, chordProUi, transposeEnharmonic,
+      setChartDocument, setDetectedFormatLabel, setChartChordProText, setChartChordProWarnings,
+      setLoadedXmlText, setPristineXmlText, setIsMxl, setRenderedPageCount, setRenderError,
+      setExportFeedback, setAppMode]);
+
   // ── Chord-chart controls ──
   const adjustTranspose = useCallback((delta: number) => {
     setTransposeSemitones((prev) => Math.max(-12, Math.min(12, prev + delta)));
@@ -2743,17 +2764,39 @@ export default function App() {
                     value={gpChordProText}
                     rows={10}
                   />
-                  <button
-                    type="button"
-                    style={{ marginTop: '0.5rem' }}
-                    onClick={() => {
-                      const blob = new Blob([gpChordProText], { type: 'text/plain' });
-                      const base = loadedFilename.replace(/\.[^.]+$/, '');
-                      triggerBlobDownload(blob, `${base}.cho`);
-                    }}
-                  >
-                    Download ChordPro
-                  </button>
+                  <div className="chart-actions" style={{ marginTop: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={loadGpAsChordChart}
+                    >
+                      View as Chord Chart
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyChordPro(gpChordProText)}
+                    >
+                      Copy ChordPro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const blob = new Blob([gpChordProText], { type: 'text/plain' });
+                        const base = loadedFilename.replace(/\.[^.]+$/, '');
+                        triggerBlobDownload(blob, `${base}.cho`);
+                      }}
+                    >
+                      Download .cho
+                    </button>
+                    {canShare && (
+                      <button
+                        type="button"
+                        onClick={() => void shareText(gpChordProText, loadedFilename.replace(/\.[^.]+$/, '') + '.cho')}
+                      >
+                        Share
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
