@@ -162,6 +162,10 @@ export interface MeasureData {
   repeatStart?: boolean;
   repeatEnd?: boolean;
   endings?: number[];
+  hasSegno?: boolean;
+  hasCoda?: boolean;
+  hasFine?: boolean;
+  navigationInstruction?: 'dc-al-fine' | 'dc-al-coda' | 'ds-al-fine' | 'ds-al-coda';
 }
 
 export interface MeasureRenderResult {
@@ -759,6 +763,7 @@ function buildMeasureData(
       .some((repeat) => (repeat.getAttribute("direction") ?? "") === "backward");
 
     const endings = parseEndings(measureEl);
+    const nav = parseNavigationMarkers(measureEl);
 
     result.push({
       measureIndex,
@@ -768,6 +773,10 @@ function buildMeasureData(
       repeatStart: repeatStart || undefined,
       repeatEnd: repeatEnd || undefined,
       endings: endings.length > 0 ? endings : undefined,
+      hasSegno: nav.hasSegno || undefined,
+      hasCoda: nav.hasCoda || undefined,
+      hasFine: nav.hasFine || undefined,
+      navigationInstruction: nav.navigationInstruction,
     });
   });
 
@@ -1362,21 +1371,30 @@ function resolveMeasureOrder(
     return measures.map((m) => m.measureIndex);
   }
 
+  // Navigation instructions (D.C./D.S.) split the score into a "main body"
+  // (measures before the instruction, inclusive) and an optional Coda section
+  // (measures after the instruction). The main body is repeat-expanded; the
+  // Coda section is only reached via the navigation jump.
+  const navIdx = measures.findIndex((m) => m.navigationInstruction);
+  const mainBodyEnd = navIdx >= 0 ? navIdx : measures.length - 1;
+
   const result: number[] = [];
   let i = 0;
 
   while (i < measures.length) {
+    if (i > mainBodyEnd) break;
+
     if (!measures[i].repeatStart) {
       result.push(measures[i].measureIndex);
       i++;
       continue;
     }
 
-    // Locate the matching backward-repeat barline.
+    // Locate the matching backward-repeat barline within the main body.
     let j = i + 1;
-    while (j < measures.length && !measures[j].repeatEnd) j++;
+    while (j <= mainBodyEnd && !measures[j].repeatEnd) j++;
 
-    if (j >= measures.length) {
+    if (j > mainBodyEnd) {
       // Unmatched forward repeat — emit linearly and move on.
       result.push(measures[i].measureIndex);
       i++;
@@ -1424,6 +1442,52 @@ function resolveMeasureOrder(
     }
   }
 
+  // ── Navigation instruction expansion (D.C./D.S.) ──────────────────────────
+  if (navIdx >= 0) {
+    const navType = measures[navIdx].navigationInstruction!;
+    const isDC = navType === 'dc-al-fine' || navType === 'dc-al-coda';
+    const isAlCoda = navType === 'dc-al-coda' || navType === 'ds-al-coda';
+
+    const segnoLocalIdx = measures.findIndex((m) => m.hasSegno);
+    const fineLocalIdx = measures.findIndex((m) => m.hasFine);
+
+    // "To Coda" jump point: last hasCoda measure before navIdx.
+    let toCodaLocalIdx = -1;
+    for (let k = navIdx - 1; k >= 0; k--) {
+      if (measures[k].hasCoda) { toCodaLocalIdx = k; break; }
+    }
+    // Coda landing: first hasCoda measure after navIdx.
+    const codaStartLocalIdx = measures.findIndex((m, idx) => idx > navIdx && m.hasCoda);
+
+    const returnFrom = isDC ? 0 : (segnoLocalIdx >= 0 ? segnoLocalIdx : 0);
+
+    if (!isAlCoda) {
+      // D.C./D.S. al Fine: play from returnFrom to Fine (inclusive).
+      if (fineLocalIdx >= returnFrom) {
+        for (let k = returnFrom; k <= fineLocalIdx; k++) result.push(measures[k].measureIndex);
+      } else {
+        warnings.push(
+          `${isDC ? 'D.C.' : 'D.S.'} al Fine: "Fine" marker not found after return point — navigation skipped.`,
+        );
+      }
+    } else {
+      // D.C./D.S. al Coda: play from returnFrom to To Coda (inclusive), then jump to Coda.
+      const toCodaEnd = toCodaLocalIdx >= returnFrom ? toCodaLocalIdx : navIdx;
+      for (let k = returnFrom; k <= toCodaEnd; k++) result.push(measures[k].measureIndex);
+
+      if (codaStartLocalIdx >= 0) {
+        for (let k = codaStartLocalIdx; k < measures.length; k++) result.push(measures[k].measureIndex);
+      } else if (navIdx + 1 < measures.length) {
+        // No explicit Coda marker — treat everything after nav measure as Coda.
+        for (let k = navIdx + 1; k < measures.length; k++) result.push(measures[k].measureIndex);
+      } else {
+        warnings.push(
+          `${isDC ? 'D.C.' : 'D.S.'} al Coda: Coda section not found after navigation measure.`,
+        );
+      }
+    }
+  }
+
   return result;
 }
 
@@ -1445,6 +1509,39 @@ function parseEndings(measureEl: Element): number[] {
   }
 
   return [...endings].sort((a, b) => a - b);
+}
+
+function parseNavigationMarkers(measureEl: Element): {
+  hasSegno: boolean;
+  hasCoda: boolean;
+  hasFine: boolean;
+  navigationInstruction: MeasureData['navigationInstruction'];
+} {
+  let hasSegno = false;
+  let hasCoda = false;
+  let hasFine = false;
+  let navigationInstruction: MeasureData['navigationInstruction'];
+
+  for (const dt of measureEl.querySelectorAll('direction-type')) {
+    if (dt.querySelector('segno')) hasSegno = true;
+    if (dt.querySelector('coda')) hasCoda = true;
+    for (const wordsEl of dt.querySelectorAll('words')) {
+      const text = (wordsEl.textContent ?? '').trim();
+      if (/d\.c\.?\s+al\s+coda/i.test(text)) {
+        navigationInstruction = 'dc-al-coda';
+      } else if (/d\.c\.?\s+al\s+fine/i.test(text)) {
+        navigationInstruction = 'dc-al-fine';
+      } else if (/d\.s\.?\s+al\s+coda/i.test(text)) {
+        navigationInstruction = 'ds-al-coda';
+      } else if (/d\.s\.?\s+al\s+fine/i.test(text)) {
+        navigationInstruction = 'ds-al-fine';
+      } else if (/\bfine\b/i.test(text) && !/\bdal\b|\bda\s*capo\b|\bd\.c\.\b|\bd\.s\.\b/i.test(text)) {
+        hasFine = true;
+      }
+    }
+  }
+
+  return { hasSegno, hasCoda, hasFine, navigationInstruction };
 }
 
 function normalizeSyllabic(input: string | undefined): LyricEvent["syllabic"] | undefined {
