@@ -815,6 +815,20 @@ select:disabled {
   max-width: 900px;
 }
 
+.chord-chart--two-col {
+  columns: 2;
+  column-gap: 2.5rem;
+  max-width: 100%;
+}
+
+.chord-chart--two-col .cc-header {
+  column-span: all;
+}
+
+.chord-chart--two-col .cc-section {
+  break-inside: avoid;
+}
+
 .cc-header {
   margin-bottom: 1.5rem;
   padding-bottom: 0.75rem;

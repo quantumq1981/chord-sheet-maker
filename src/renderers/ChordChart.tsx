@@ -223,14 +223,16 @@ export interface ChordChartProps {
   transposeSteps?: number;
   /** Whether to spell transposed accidentals as sharps, flats, or auto (golden rule). */
   enharmonicPreference?: EnharmonicPreference;
+  /** Render sections in two newspaper-style columns for compact print layout. */
+  twoColumn?: boolean;
 }
 
-export default function ChordChart({ document: doc, transposeSteps = 0, enharmonicPreference = 'auto' }: ChordChartProps) {
+export default function ChordChart({ document: doc, transposeSteps = 0, enharmonicPreference = 'auto', twoColumn = false }: ChordChartProps) {
   const displayKey =
     doc.key ? transposeChord(doc.key, transposeSteps, enharmonicPreference) : undefined;
 
   return (
-    <div className="chord-chart">
+    <div className={twoColumn ? 'chord-chart chord-chart--two-col' : 'chord-chart'}>
       {(doc.title || doc.artist) && (
         <div className="cc-header">
           {doc.title && <h2 className="cc-title">{doc.title}</h2>}
