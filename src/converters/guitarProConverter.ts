@@ -21,87 +21,245 @@ export interface GpChordProResult {
   warnings: string[];
 }
 
+// Matches strings that look like chord names: start with A–G, followed by
+// optional accidentals and standard suffix tokens, no spaces.
+// Examples: C, Dm, G7, F#m7, Bb13, Cmaj7, EØ, F#m7b5, C/E, AB9, D7M
+const CHORD_TEXT_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus[24]?|add|[°ø+ΔmM]|[0-9]+|[#b][0-9]*|\/[A-G][#b]?|[()])*$/;
+
+function looksLikeChordName(text: string): boolean {
+  const t = text.trim();
+  return t.length >= 1 && t.length <= 14 && CHORD_TEXT_RE.test(t);
+}
+
 /**
- * Extract chord names and lyrics from a single track and emit ChordPro text.
+ * Scan all tracks and return the index of the one most likely to carry chord
+ * symbol data, together with the primary data source type.
+ *
+ * Scoring heuristic (higher = better chord source):
+ *  +3 per beat that references a chord diagram (beat.chordId)
+ *  +1 per beat whose text annotation looks like a chord name
+ *  +30 if the track name contains "chord" (case-insensitive)
+ *
+ * Ties are broken in favour of a lower track index.
+ */
+export function findChordSourceTrack(
+  score: alphaTabNS.model.Score,
+  primaryTrackIndex: number,
+): { trackIdx: number; hasDiagrams: boolean } {
+  let bestIdx = primaryTrackIndex;
+  let bestScore = -1;
+
+  for (let ti = 0; ti < score.tracks.length; ti++) {
+    const track = score.tracks[ti];
+    const staff = track?.staves?.[0];
+    if (!staff) continue;
+
+    let s = 0;
+    for (const bar of staff.bars) {
+      for (const voice of bar.voices) {
+        for (const beat of voice.beats) {
+          if (beat.chordId) s += 3;
+          else if (beat.text && looksLikeChordName(beat.text)) s += 1;
+        }
+      }
+    }
+    if (track.name?.toLowerCase().includes('chord')) s += 30;
+
+    if (s > bestScore) {
+      bestScore = s;
+      bestIdx = ti;
+    }
+  }
+
+  if (bestScore <= 0) return { trackIdx: primaryTrackIndex, hasDiagrams: false };
+
+  // Determine whether winning track is diagram-based or text-based.
+  const wStaff = score.tracks[bestIdx]?.staves?.[0];
+  let diagCount = 0;
+  if (wStaff) {
+    for (const bar of wStaff.bars) {
+      for (const voice of bar.voices) {
+        for (const beat of voice.beats) {
+          if (beat.chordId) diagCount++;
+        }
+      }
+    }
+  }
+
+  return { trackIdx: bestIdx, hasDiagrams: diagCount > 0 };
+}
+
+/**
+ * Extract chord names and lyrics from the score and emit ChordPro text.
  *
  * Strategy:
- *  - Walk voice 0 of staff 0 of the selected track, bar by bar.
- *  - Prefer chord-diagram names (beat.chordId → staff.chords) for chord
- *    symbols; fall back to beat.text annotations.
- *  - If lyrics exist, emit inline `[Chord]lyric` format.
- *  - If no lyrics exist, emit a pipe-grid line per measure.
+ *  1. Find the "chord source" track — the track with the most chord-diagram
+ *     references (beat.chordId). If no diagram data exists, fall back to beats
+ *     whose text annotations look like chord names. This means chords are often
+ *     taken from a different track than the one the user is viewing (e.g. a
+ *     dedicated "Chords" track in Confirmation.gp, or the guitar track in a
+ *     multi-track GP4 file).
+ *
+ *  2. Walk the chord source track bar by bar, parallel to score.masterBars so
+ *     that section markers (masterBar.section.text) are emitted as {comment:}.
+ *
+ *  3. Within each bar, deduplicate consecutive identical chord names so a bar
+ *     where all 4 beats share the same chord emits just one symbol.
+ *
+ *  4. Chord name resolution order per beat:
+ *       a. beat.chord?.name   (chord diagram name — always trust this)
+ *       b. beat.text          (if it passes the chord-name regex)
+ *
+ *  5. If the melody track (trackIndex) has lyrics, emit inline [Chord]lyric
+ *     format using lyrics from that track. Otherwise emit a pipe-grid row.
  */
-export function gpScoreToChordPro(score: alphaTabNS.model.Score, trackIndex = 0): GpChordProResult {
+export function gpScoreToChordPro(
+  score: alphaTabNS.model.Score,
+  trackIndex = 0,
+): GpChordProResult {
   const warnings: string[] = [];
   const lines: string[] = [];
 
-  // Header
-  if (score.title)  lines.push(`{title: ${score.title}}`);
-  if (score.artist) lines.push(`{artist: ${score.artist}}`);
-  if (score.album)  lines.push(`{album: ${score.album}}`);
+  // ── Header ──────────────────────────────────────────────────────────────
+  if (score.title)   lines.push(`{title: ${score.title}}`);
+  if (score.artist)  lines.push(`{artist: ${score.artist}}`);
+  if (score.album)   lines.push(`{album: ${score.album}}`);
   if (score.tempo > 0) lines.push(`{tempo: ${score.tempo}}`);
   lines.push('');
 
-  const track = score.tracks[trackIndex];
-  if (!track) {
+  const melodyTrack = score.tracks[trackIndex];
+  if (!melodyTrack) {
     warnings.push(`Track index ${trackIndex} not found in score.`);
     return { text: lines.join('\n'), warnings };
   }
 
-  const staff = track.staves[0];
-  if (!staff || !staff.bars.length) {
+  const melodyStaff = melodyTrack.staves[0];
+  if (!melodyStaff?.bars.length) {
     warnings.push('No bars found in selected track.');
     return { text: lines.join('\n'), warnings };
   }
 
-  // Determine whether any beat across the track has lyrics.
+  // ── Find best chord source ───────────────────────────────────────────────
+  const { trackIdx: chordTrackIdx } = findChordSourceTrack(score, trackIndex);
+  const chordTrack = score.tracks[chordTrackIdx];
+  const chordStaff = chordTrack?.staves?.[0];
+
+  if (!chordStaff?.bars.length) {
+    warnings.push('No chord symbols found in this file.');
+    return { text: lines.join('\n'), warnings };
+  }
+
+  if (chordTrackIdx !== trackIndex) {
+    const srcName = chordTrack.name?.trim() || `Track ${chordTrackIdx + 1}`;
+    warnings.push(`Chord symbols taken from "${srcName}".`);
+  }
+
+  // ── Lyrics check (on melody track) ──────────────────────────────────────
   let hasAnyLyrics = false;
-  outer: for (const bar of staff.bars) {
+  outerLyrics: for (const bar of melodyStaff.bars) {
     for (const voice of bar.voices) {
       for (const beat of voice.beats) {
-        if (beat.lyrics?.some(l => l?.trim())) { hasAnyLyrics = true; break outer; }
+        if (beat.lyrics?.some((l) => l?.trim())) {
+          hasAnyLyrics = true;
+          break outerLyrics;
+        }
       }
     }
   }
 
-  for (const bar of staff.bars) {
-    const voice = bar.voices[0];
-    if (!voice) continue;
+  // ── Section marker index (masterBar index → section text) ───────────────
+  const sectionAtBar = new Map<number, string>();
+  for (const mb of score.masterBars) {
+    if (mb.section) sectionAtBar.set(mb.index, mb.section.text);
+  }
 
-    // Collect (chord, lyric) pairs per beat.
+  // ── Bar walk ─────────────────────────────────────────────────────────────
+  let pendingSection: string | null = null;
+
+  const barCount = chordStaff.bars.length;
+
+  for (let barIdx = 0; barIdx < barCount; barIdx++) {
+    // Queue section marker (emitted lazily before the first non-empty bar).
+    if (sectionAtBar.has(barIdx)) {
+      pendingSection = sectionAtBar.get(barIdx)!;
+    }
+
+    const chordBar = chordStaff.bars[barIdx];
+    const chordVoice = chordBar?.voices[0];
+    if (!chordVoice) continue;
+
+    // ── Build (chord, lyric) pairs for this bar ──────────────────────────
     const pairs: Array<{ chord: string; lyric: string }> = [];
-    for (const beat of voice.beats) {
+
+    for (const beat of chordVoice.beats) {
       if (beat.isEmpty) continue;
 
-      // Chord name: prefer diagram name, fall back to beat.text
+      // Chord name: diagram name takes priority; chord-like text is fallback.
       let chord = '';
-      if (beat.chordId && staff.chords?.has(beat.chordId)) {
-        chord = staff.chords.get(beat.chordId)!.name ?? '';
-      } else if (beat.text) {
-        chord = beat.text;
+      const diagName = beat.chord?.name?.trim() ?? '';
+      if (diagName) {
+        chord = diagName;
+      } else if (beat.text && looksLikeChordName(beat.text)) {
+        chord = beat.text.trim();
       }
 
-      const lyric = beat.lyrics?.[0]?.trim() ?? '';
+      // Lyric: from the melody track at the same beat position, when lyrics
+      // mode is active. Beat index alignment works because all tracks in a GP
+      // file share the same bar/beat structure within each bar.
+      let lyric = '';
+      if (hasAnyLyrics) {
+        const melodyBeat = melodyStaff.bars[barIdx]?.voices[0]?.beats[
+          chordVoice.beats.indexOf(beat)
+        ];
+        lyric = melodyBeat?.lyrics?.[0]?.trim() ?? '';
+      }
+
       pairs.push({ chord, lyric });
     }
 
-    const hasChords = pairs.some(p => p.chord);
-    const hasLyrics = pairs.some(p => p.lyric);
+    // Deduplicate consecutive identical chords within the bar so that a bar
+    // where all beats carry the same chord symbol emits it only once.
+    const dedupedPairs: typeof pairs = [];
+    let lastChord = '';
+    for (const p of pairs) {
+      if (p.chord !== lastChord || p.lyric) {
+        dedupedPairs.push(p);
+        if (p.chord) lastChord = p.chord;
+      }
+    }
+
+    const hasChords = dedupedPairs.some((p) => p.chord);
+    const hasLyrics = dedupedPairs.some((p) => p.lyric);
     if (!hasChords && !hasLyrics) continue;
 
+    // Emit pending section marker before the first chord-bearing bar of each
+    // section so that empty instrumental intro bars don't push the comment
+    // away from the chords it annotates.
+    if (pendingSection !== null) {
+      lines.push('');
+      lines.push(`{comment: ${pendingSection}}`);
+      pendingSection = null;
+    }
+
     if (hasAnyLyrics) {
-      // Inline format: build a single line with [Chord]lyric tokens.
+      // Inline format: [Chord]lyric syllable
       let line = '';
-      for (const { chord, lyric } of pairs) {
+      for (const { chord, lyric } of dedupedPairs) {
         if (chord) line += `[${chord}]`;
         line += lyric;
       }
       if (line.trim()) lines.push(line);
     } else {
-      // Grid-only format: | C | Am | F | G |
-      const chords = pairs.map(p => p.chord).filter(Boolean);
+      // Grid format: | C | Am | F | G |
+      const chords = dedupedPairs.map((p) => p.chord).filter(Boolean);
       if (chords.length) lines.push('| ' + chords.join(' | ') + ' |');
     }
+  }
+
+  // Warn if the output body ended up empty (header-only).
+  const bodyLines = lines.filter((l) => l && !l.startsWith('{'));
+  if (!bodyLines.length) {
+    warnings.push('No chord symbols found in this file.');
   }
 
   return { text: lines.join('\n'), warnings };
@@ -134,7 +292,10 @@ function midiToName(midi: number): string {
  * heuristic algorithm used for MusicXML, these are exact fingerings from the
  * original arrangement.
  */
-export function gpScoreNotePositions(score: alphaTabNS.model.Score, trackIndex = 0): NotePositionMap[] {
+export function gpScoreNotePositions(
+  score: alphaTabNS.model.Score,
+  trackIndex = 0,
+): NotePositionMap[] {
   const track = score.tracks[trackIndex];
   if (!track) return [];
 
