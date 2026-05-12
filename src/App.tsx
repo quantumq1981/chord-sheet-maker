@@ -729,6 +729,7 @@ export default function App() {
   const [detectedFormatLabel, setDetectedFormatLabel] = useState('');
   const [chartChordProText, setChartChordProText] = useState('');
   const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
+  const [chartTwoColumn, setChartTwoColumn] = useState(false);
 
   // ── Tablature mode state ──
   const [tabTuning, setTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
@@ -2201,7 +2202,7 @@ export default function App() {
             onDrop={onDrop}
           >
             {chartDocument && (
-              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} enharmonicPreference={transposeEnharmonic} />
+              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} enharmonicPreference={transposeEnharmonic} twoColumn={chartTwoColumn} />
             )}
           </section>
         ) : appMode === 'tablature' ? (
@@ -2353,6 +2354,14 @@ export default function App() {
 
               <div className="panel-section">
                 <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Print / Export</h2>
+                <label className="export-label" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={chartTwoColumn}
+                    onChange={(e) => setChartTwoColumn(e.target.checked)}
+                  />
+                  2-column layout
+                </label>
                 <label className="export-label" htmlFor="chart-pdf-size">Page Size</label>
                 <select
                   id="chart-pdf-size"
