@@ -7,6 +7,7 @@ import {
   Formatter,
   GhostNote,
   Annotation,
+  Dot,
   BarlineType,
   type RenderContext,
 } from 'vexflow';
@@ -216,14 +217,20 @@ function renderMeasureNotes(
   timeSig: { beats: number; beatType: number },
 ): void {
   const tickables = measure.notes.map((note, idx): TabNote | GhostNote => {
+    const isDotted = note.duration.endsWith('d');
+    const baseDuration = isDotted ? note.duration.slice(0, -1) : note.duration;
+
     if (note.isRest || note.positions.every((p) => p.fret === 'x')) {
-      return new GhostNote({ duration: note.duration.replace('d', '') });
+      const ghost = new GhostNote({ duration: baseDuration });
+      if (isDotted) Dot.buildAndAttach([ghost]);
+      return ghost;
     }
 
     const tabNote = new TabNote({
       positions: note.positions.map((p) => ({ str: p.str, fret: p.fret })),
-      duration: note.duration.replace('d', ''),  // VexFlow handles dots separately
+      duration: baseDuration,
     });
+    if (isDotted) Dot.buildAndAttach([tabNote]);
 
     // Attach chord symbol annotation above the stave
     const sym = measure.chordSymbols.find((cs) => cs.noteIndex === idx);
