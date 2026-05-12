@@ -700,6 +700,7 @@ export default function App() {
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const didAutoFitRef = useRef(false);
   const xmlLoadedRef = useRef('');
+  const chartRef = useRef<HTMLElement | null>(null);
   const [loadedXmlText, setLoadedXmlText] = useState('');
   const [pristineXmlText, setPristineXmlText] = useState('');
   const [isMxl, setIsMxl] = useState(false);
@@ -1904,6 +1905,73 @@ export default function App() {
       setLoadedXmlText, setPristineXmlText, setIsMxl, setRenderedPageCount, setRenderError,
       setExportFeedback, setAppMode]);
 
+  // ── Chord-chart PDF export ──
+  const exportChordChartPdf = useCallback(async () => {
+    const chartEl = chartRef.current?.querySelector('.chord-chart') as HTMLElement | null;
+    if (!chartEl) { showExportError('No chord chart to export.'); return; }
+
+    const isLetter = pdfPageSize === 'letter';
+    const unit = isLetter ? 'in' : 'mm';
+    const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
+    const margin = isLetter ? 0.5 : 12;
+
+    try {
+      const { default: html2canvas } = await import('html2canvas');
+      const canvas = await html2canvas(chartEl, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+      });
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const contentW = pageW - margin * 2;
+      const contentH = pageH - margin * 2;
+
+      // pxPerUnit: canvas pixels per inch (or mm)
+      const pxPerUnit = canvas.width / contentW;
+      const pageCanvasPx = Math.floor(contentH * pxPerUnit);
+      const totalPages = Math.ceil(canvas.height / pageCanvasPx);
+
+      for (let p = 0; p < totalPages; p++) {
+        if (p > 0) pdf.addPage(format, 'portrait');
+        const srcY = p * pageCanvasPx;
+        const srcH = Math.min(pageCanvasPx, canvas.height - srcY);
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = srcH;
+        slice.getContext('2d')!.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+        const imgData = slice.toDataURL('image/jpeg', 0.92);
+        pdf.addImage(imgData, 'JPEG', margin, margin, contentW, srcH / pxPerUnit, undefined, 'FAST');
+      }
+
+      const blob = pdf.output('blob');
+      setPdfBlobUrl(URL.createObjectURL(blob));
+      setPdfFilename(`${baseName}.pdf`);
+      showExportSuccess('PDF ready. Tap Open PDF.');
+    } catch (error) {
+      showExportError(`PDF export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [baseName, pdfPageSize, showExportError, showExportSuccess]);
+
+  const printChordChart = useCallback(() => {
+    if (!chartDocument) { showExportError('No chord chart loaded.'); return; }
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      window.removeEventListener('afterprint', restore);
+      document.body.classList.remove('printing-chord-chart', 'print-page-letter', 'print-page-a4');
+    };
+    window.addEventListener('afterprint', restore);
+    setTimeout(restore, 10_000);
+    document.body.classList.add('printing-chord-chart');
+    document.body.classList.add(pdfPageSize === 'a4' ? 'print-page-a4' : 'print-page-letter');
+    window.print();
+  }, [chartDocument, pdfPageSize, showExportError]);
+
   // ── Chord-chart controls ──
   const adjustTranspose = useCallback((delta: number) => {
     setTransposeSemitones((prev) => Math.max(-12, Math.min(12, prev + delta)));
@@ -2126,6 +2194,7 @@ export default function App() {
         {/* ── Left: score viewport, tab view, or chord chart ── */}
         {appMode === 'chord-chart' ? (
           <section
+            ref={chartRef}
             className={`chord-chart-viewport ${isDragging ? 'dragging' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
@@ -2281,6 +2350,36 @@ export default function App() {
                   <SongAnalyticsPanel model={songModel} />
                 </div>
               )}
+
+              <div className="panel-section">
+                <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Print / Export</h2>
+                <label className="export-label" htmlFor="chart-pdf-size">Page Size</label>
+                <select
+                  id="chart-pdf-size"
+                  value={pdfPageSize}
+                  onChange={(e) => setPdfPageSize(e.target.value as PdfPageSize)}
+                  style={{ marginBottom: '0.6rem' }}
+                >
+                  <option value="letter">Letter (Portrait)</option>
+                  <option value="a4">A4 (Portrait)</option>
+                </select>
+                <div className="export-actions">
+                  <button type="button" className="btn-primary" onClick={printChordChart}>
+                    Print / Save PDF
+                  </button>
+                  <button type="button" onClick={() => void exportChordChartPdf()}>
+                    Generate PDF
+                  </button>
+                </div>
+                {pdfBlobUrl && pdfFilename && (
+                  <div className="pdf-ready-box">
+                    <a href={pdfBlobUrl} download={pdfFilename} className="btn-primary">
+                      Open PDF
+                    </a>
+                  </div>
+                )}
+                <p className="export-hint">Print uses browser dialog — choose "Save as PDF" for a file. Generate PDF produces a rasterized PDF directly.</p>
+              </div>
 
               <div className="panel-section">
               <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>ChordPro Export</h2>
