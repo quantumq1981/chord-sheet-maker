@@ -431,7 +431,7 @@ Test files live in `src/**/__tests__/`:
 | First-system rehearsal marks not repositioned (no gap above) | By design — only inter-system gaps are centred |
 | Guitar Pro GP3/GP4/GP5/GPX support added | Added 2026-05-01 — AlphaTab renders notation+tab; ChordPro extracted from beat annotations; exact string/fret positions shown in fretboard panel |
 | GP ChordPro extraction depends on beat.text / chord diagrams | GP3/4 often store chord names as beat text annotations; GP5/X may use diagram data instead — extraction quality varies by file |
-| GP transpose not yet wired | GP files are rendered verbatim; the transpose bar has no effect on GP scores (AlphaTab handles transposition internally) |
+| GP transpose | Wired 2026-05-12 — `transposeSemitones` synced into `alphaTabSettings.transposeSemitones` via `useEffect([transposeSemitones, gpFileBuffer])`; applied via `notation.transpositionPitches` in `buildSettings`. MusicXML files use `transposeMusicXML()` XML-level path instead. |
 | **GP files stuck at "Rendering score…" — never display** | **OPEN as of 2026-05-02 — see full investigation below** |
 
 ---

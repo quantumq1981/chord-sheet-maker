@@ -103,6 +103,11 @@ export default function AlphaTabRenderer({
       (s.display as alphaTab.DisplaySettings).barsPerRow = uiSettings.display.barsPerRow;
     }
     (s.display as alphaTab.DisplaySettings).scale = uiSettings.display.scale;
+    const semitones = uiSettings.transposeSemitones ?? 0;
+    if (semitones !== 0) {
+      // Fill all 128 possible track slots so every track in the file gets the same offset.
+      s.notation.transpositionPitches = new Array(128).fill(semitones);
+    }
     return s;
   }, [baseUrl, fontDir, uiSettings]);
 
@@ -203,6 +208,10 @@ export default function AlphaTabRenderer({
       const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
       const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, api.settings);
       console.log('[AlphaTab] ScoreLoader parsed ok, tracks:', score.tracks.length);
+
+      // Print profile: modify stylesheet before rendering so the worker gets
+      // clean page-formatted output.  This is applied to the parsed score and
+      // only used on the renderParsedScore (no-worker) path below.
       if (uiSettings.printProfile) {
         score.stylesheet.hideEmptyStaves = true;
         score.stylesheet.hideEmptyStavesInFirstSystem = false;
@@ -226,7 +235,51 @@ export default function AlphaTabRenderer({
       }
 
       const tracks = partIdx >= 0 && partIdx < score.tracks.length ? [partIdx] : undefined;
-      renderParsedScore(api, score, tracks, attempt);
+      const useWorkers = api.settings.core.useWorkers !== false;
+
+      // Print profiles require stylesheet mutations on the parsed Score object;
+      // those mutations are lost when the worker re-parses from raw bytes.
+      // Use renderParsedScore (synchronous, no-worker path) for print.
+      if (!useWorkers || uiSettings.printProfile) {
+        renderParsedScore(api, score, tracks, attempt);
+        return;
+      }
+
+      // Worker path — pass raw bytes so AlphaTab re-parses inside the worker.
+      // Passing a pre-parsed Score object across the worker boundary serialises
+      // the entire object graph unreliably; renderFinished never fires.
+      clearRenderTimer();
+      setStatus('loading');
+      setErrorMsg('');
+
+      renderTimerRef.current = window.setTimeout(() => {
+        if (attempt !== renderAttemptRef.current || apiRef.current !== api) return;
+        console.warn('[AlphaTab] worker render timed out; retrying without workers');
+        clearRenderTimer();
+        api.destroy();
+        const fallbackApi = createApi(false);
+        if (fallbackApi) {
+          // Fallback uses the already-parsed score — no re-parse needed.
+          renderParsedScore(fallbackApi, score, tracks, attempt);
+          return;
+        }
+        const msg = 'AlphaTab rendering timed out before the worker responded. Try a different track or Tab-only view.';
+        setStatus('error');
+        setErrorMsg(msg);
+        onErrorRef.current?.(msg);
+      }, WORKER_RENDER_TIMEOUT_MS);
+
+      // Slice a fresh ArrayBuffer copy so the original bytes stay usable.
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      const ok = api.load(buf, tracks);
+      console.log('[AlphaTab] api.load() returned:', ok);
+      if (ok === false) {
+        clearRenderTimer();
+        const msg = 'AlphaTab rejected the file data (api.load returned false).';
+        setStatus('error');
+        setErrorMsg(msg);
+        onErrorRef.current?.(msg);
+      }
     } catch (e: unknown) {
       clearRenderTimer();
       const msg = e instanceof Error ? e.message : String(e);
@@ -235,7 +288,7 @@ export default function AlphaTabRenderer({
       setErrorMsg(msg);
       onErrorRef.current?.(msg);
     }
-  }, [clearRenderTimer, renderParsedScore]);
+  }, [clearRenderTimer, renderParsedScore, createApi, uiSettings.printProfile]);
 
   // Derive the active file data; fileBytes wins over xmlText.
   const fileData: string | Uint8Array = fileBytes ?? (xmlText ?? '');
@@ -274,19 +327,22 @@ export default function AlphaTabRenderer({
   const prevBarsRef = useRef(uiSettings.display.barsPerRow);
   const prevScaleRef = useRef(uiSettings.display.scale);
   const prevPrintProfileRef = useRef(uiSettings.printProfile);
+  const prevTransposeRef = useRef(uiSettings.transposeSemitones);
   useEffect(() => {
     const staveChanged = prevStaveRef.current !== uiSettings.display.staveProfile;
     const layoutChanged = prevLayoutRef.current !== uiSettings.display.layoutMode;
     const barsChanged = prevBarsRef.current !== uiSettings.display.barsPerRow;
     const scaleChanged = prevScaleRef.current !== uiSettings.display.scale;
     const printProfileChanged = prevPrintProfileRef.current !== uiSettings.printProfile;
+    const transposeChanged = prevTransposeRef.current !== uiSettings.transposeSemitones;
     prevStaveRef.current = uiSettings.display.staveProfile;
     prevLayoutRef.current = uiSettings.display.layoutMode;
     prevBarsRef.current = uiSettings.display.barsPerRow;
     prevScaleRef.current = uiSettings.display.scale;
     prevPrintProfileRef.current = uiSettings.printProfile;
+    prevTransposeRef.current = uiSettings.transposeSemitones;
 
-    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged || printProfileChanged)) return;
+    if (!(staveChanged || layoutChanged || barsChanged || scaleChanged || printProfileChanged || transposeChanged)) return;
     if (!containerRef.current) return;
 
     clearRenderTimer();
@@ -300,7 +356,8 @@ export default function AlphaTabRenderer({
       loadData(api, fileData, uiSettings.partIndex);
     }
   }, [uiSettings.display.staveProfile, uiSettings.display.layoutMode, uiSettings.display.barsPerRow,
-      uiSettings.display.scale, uiSettings.printProfile, fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
+      uiSettings.display.scale, uiSettings.printProfile, uiSettings.transposeSemitones,
+      fileData, uiSettings.partIndex, createApi, loadData, clearRenderTimer]);
 
   // Notify AlphaTab when the window resizes.
   useEffect(() => {
@@ -312,7 +369,10 @@ export default function AlphaTabRenderer({
   return (
     <div className="alphatab-wrapper">
       {status === 'loading' && (
-        <div className="alphatab-loading">Rendering score…</div>
+        <div className="alphatab-loading">
+          <span className="alphatab-loading__spinner" aria-hidden="true" />
+          Rendering score…
+        </div>
       )}
       {status === 'error' && (
         <div className="alphatab-error">{errorMsg}</div>

@@ -5,6 +5,14 @@ import type { AlphaTabUiSettings } from '../../types/alphatab';
 
 const destroyMock = vi.fn();
 const renderScoreMock = vi.fn();
+const loadMock = vi.fn(() => true);
+
+// vi.hoisted ensures this is initialised before the vi.mock factory runs
+// (the factory is hoisted to the top of the file by Vitest's transform).
+const loadScoreFromBytesMock = vi.hoisted(() => vi.fn(() => ({
+  tracks: [{ name: 'Guitar', staves: [{ stringTuning: { tunings: [64, 59, 55, 50, 45, 40] } }] }],
+  stylesheet: {},
+})));
 
 let renderFinishedCallbacks: Array<() => void> = [];
 
@@ -30,6 +38,7 @@ vi.mock('@coderline/alphatab', () => {
 
     destroy = destroyMock;
     renderScore = renderScoreMock;
+    load = loadMock;
     updateSettings = vi.fn();
   }
 
@@ -41,9 +50,7 @@ vi.mock('@coderline/alphatab', () => {
     DisplaySettings: Settings,
     importer: {
       ScoreLoader: {
-        loadScoreFromBytes: vi.fn(() => ({
-          tracks: [{ name: 'Guitar', staves: [{ stringTuning: { tunings: [64, 59, 55, 50, 45, 40] } }] }],
-        })),
+        loadScoreFromBytes: loadScoreFromBytesMock,
       },
     },
   };
@@ -58,6 +65,12 @@ const defaultSettings: AlphaTabUiSettings = {
 beforeEach(() => {
   renderFinishedCallbacks = [];
   vi.clearAllMocks();
+  // Restore default successful parse.
+  loadScoreFromBytesMock.mockReturnValue({
+    tracks: [{ name: 'Guitar', staves: [{ stringTuning: { tunings: [64, 59, 55, 50, 45, 40] } }] }],
+    stylesheet: {},
+  });
+  loadMock.mockReturnValue(true);
 });
 
 describe('AlphaTabRenderer', () => {
@@ -69,23 +82,22 @@ describe('AlphaTabRenderer', () => {
     expect(destroyMock).toHaveBeenCalled();
   });
 
-  it('calls renderScore after ready signal fires', () => {
+  it('calls api.load (not renderScore) in worker mode', () => {
     render(
       <AlphaTabRenderer xmlText="<score-partwise />" uiSettings={defaultSettings} />,
     );
-    // Simulate AlphaTab firing the ready signal (renderFinished).
-    renderFinishedCallbacks.forEach((fn) => fn());
-    expect(renderScoreMock).toHaveBeenCalled();
+    // Worker path: raw bytes go to the worker via api.load(), not renderScore().
+    expect(loadMock).toHaveBeenCalled();
+    expect(renderScoreMock).not.toHaveBeenCalled();
   });
 
-  it('reports errors via onError when renderScore throws', () => {
+  it('reports errors via onError when ScoreLoader throws', () => {
     const onError = vi.fn();
-    renderScoreMock.mockImplementationOnce(() => { throw new Error('bad xml'); });
+    loadScoreFromBytesMock.mockImplementationOnce(() => { throw new Error('bad xml'); });
 
     render(
       <AlphaTabRenderer xmlText="<broken" uiSettings={defaultSettings} onError={onError} />,
     );
-    renderFinishedCallbacks.forEach((fn) => fn());
     expect(onError).toHaveBeenCalledWith('bad xml');
   });
 });
