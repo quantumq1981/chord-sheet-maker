@@ -21,6 +21,7 @@ import {
   isMusicXmlFormat,
   isChordChartFormat,
   isGuitarProFormat,
+  isPdfFormat,
   asSourceFormat,
 } from './ingest/sniffFormat';
 import {
@@ -1160,11 +1161,82 @@ export default function App() {
         xmlLoadedRef.current = '';
         setAppMode('chord-chart');
 
+      } else if (isPdfFormat(detected)) {
+        // ── PDF text-extraction path ──
+        // Lazy-load pdfjs-dist only when a PDF is actually dropped, keeping it
+        // out of the main bundle for users who never use this path.
+        setRenderError('');
+        const { extractPdfText } = await import('./utils/extractPdfText');
+        const extracted = await extractPdfText(arrayBuffer);
+        const trimmed = extracted.trim();
+
+        if (trimmed.length < 50) {
+          setRenderError(
+            'Could not extract readable text from this PDF — it may be a scanned image. ' +
+            'Use the OMR panel (backend required) for scanned scores, or paste the text manually.'
+          );
+          return;
+        }
+
+        // Re-detect the format of the extracted text
+        const extractedBytes = new TextEncoder().encode(trimmed);
+        const redetected = sniffFormatFromBytes(extractedBytes, file.name.replace(/\.pdf$/i, '.txt'));
+
+        if (!isChordChartFormat(redetected)) {
+          setRenderError(
+            'PDF text extracted but no chord chart content recognised. ' +
+            'For music notation scores use the OMR panel (backend required).'
+          );
+          return;
+        }
+
+        const pdfSourceFormat = redetected.format === 'ascii_tab'
+          ? 'chordpro'
+          : asSourceFormat(redetected)!;
+        const pdfDoc = parseChordChart(trimmed, pdfSourceFormat);
+        setSongModel(parseUgAscii(trimmed, { title: pdfDoc.title, artist: pdfDoc.artist }));
+
+        const pdfFormatLabels: Record<string, string> = {
+          chordpro: 'PDF → ChordPro',
+          ultimateguitar: 'PDF → Ultimate Guitar',
+          'chords-over-words': 'PDF → Chord Chart',
+          ascii_tab: 'PDF → ASCII Tab',
+        };
+
+        setLoadedFilename(file.name);
+        setChartDocument(pdfDoc);
+        setDetectedFormatLabel(pdfFormatLabels[redetected.format] ?? 'PDF → Chord Chart');
+        setTransposeWarnings([]);
+        const pdfChartExport = serializeChordProFromDocument(pdfDoc, transposeSemitones, chordProUi, transposeEnharmonic);
+        setChartChordProText(pdfChartExport.text);
+        setChartChordProWarnings(pdfChartExport.warnings);
+        setRenderError('');
+        setExportFeedback(null);
+        setLoadedXmlText('');
+        setPristineXmlText('');
+        setIsMxl(false);
+        setRenderedPageCount(0);
+        setPdfBlobUrl(null);
+        setChordProText('');
+        setChordProWarnings([]);
+        setChordProDiagnostics(null);
+        setCsmpnFakeBookText('');
+        setCsmpnWarnings([]);
+        setGpFileBuffer(null);
+        setGpVersion('');
+        setGpTracks([]);
+        setGpChordProText('');
+        setGpChordProWarnings([]);
+        if (containerRef.current) containerRef.current.innerHTML = '';
+        xmlLoadedRef.current = '';
+        setAppMode('chord-chart');
+
       } else {
         setRenderError(
           'Unsupported file type. Upload .xml / .musicxml / .mxl (notation), ' +
           '.gp / .gp3 / .gp4 / .gp5 / .gpx (Guitar Pro), ' +
-          'or .cho / .chopro / .crd / .pro / .txt (chord chart).'
+          '.cho / .chopro / .crd / .pro / .txt (chord chart), ' +
+          'or .pdf (selectable-text chord sheet).'
         );
       }
     } catch (error) {

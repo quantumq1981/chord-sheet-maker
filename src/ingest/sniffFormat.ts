@@ -26,10 +26,14 @@ export type DetectedFormat =
   | { format: 'chords-over-words' }
   | { format: 'ascii_tab' }
   | { format: 'guitarpro'; version: string }
+  | { format: 'pdf' }
   | { format: 'unknown' };
 
 // ZIP local-file magic: PK\x03\x04
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04] as const;
+
+// PDF magic bytes: %PDF-
+const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46] as const;
 
 // Guitar Pro file extensions
 const GP_EXTENSIONS = new Set(['gp', 'gp3', 'gp4', 'gp5', 'gpx', 'gp6', 'gp7']);
@@ -86,6 +90,16 @@ function hasZipMagic(bytes: Uint8Array): boolean {
   );
 }
 
+function hasPdfMagic(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === PDF_MAGIC[0] &&
+    bytes[1] === PDF_MAGIC[1] &&
+    bytes[2] === PDF_MAGIC[2] &&
+    bytes[3] === PDF_MAGIC[3]
+  );
+}
+
 function fileExtension(filename: string): string {
   const dot = filename.lastIndexOf('.');
   return dot >= 0 ? filename.slice(dot + 1).toLowerCase() : '';
@@ -115,6 +129,11 @@ export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): Detected
   // too; otherwise Safari/iOS users see an XML/MXL parse error for GP uploads.
   const gp = detectGuitarPro(bytes, ext);
   if (gp) return gp;
+
+  // 1b. PDF magic bytes or .pdf extension → needs async text extraction in caller
+  if (hasPdfMagic(bytes) || ext === 'pdf') {
+    return { format: 'pdf' };
+  }
 
   // 2. ZIP magic → MXL
   if (hasZipMagic(bytes)) {
@@ -210,6 +229,10 @@ export function isChordChartFormat(detected: DetectedFormat): boolean {
 
 export function isAsciiTabFormat(detected: DetectedFormat): boolean {
   return detected.format === 'ascii_tab';
+}
+
+export function isPdfFormat(detected: DetectedFormat): boolean {
+  return detected.format === 'pdf';
 }
 
 export function asSourceFormat(detected: DetectedFormat): SourceFormat | null {
