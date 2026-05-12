@@ -241,6 +241,66 @@ describe('parseChordPro — pipe-grid lines', () => {
   });
 });
 
+// ─── 8. Chords-over-words inside ChordPro / UG context ───────────────────────
+
+describe('parseChordPro — chords-over-words detection', () => {
+  it('pairs a plain chord line with the following lyric line', () => {
+    const doc = parseChordPro('Am  G  C\nSome words here');
+    const tokens = doc.sections[0].lines[0].tokens;
+    expect(tokens.filter((t) => t.kind === 'chord').map((t) => t.text)).toEqual(['Am', 'G', 'C']);
+    expect(tokens.find((t) => t.kind === 'lyric')?.text).toBe('Some words here');
+  });
+
+  it('pairs chord lines with lyrics inside a UG [Verse] section', () => {
+    const text = '[Verse 1]\nAm  G\nHello world\n[Chorus]\n[C]sing it';
+    const doc = parseChordPro(text);
+    const verse = doc.sections.find((s) => s.type === 'verse');
+    expect(verse).toBeDefined();
+    const tokens = verse!.lines[0].tokens;
+    expect(tokens.filter((t) => t.kind === 'chord').map((t) => t.text)).toEqual(['Am', 'G']);
+    expect(tokens.find((t) => t.kind === 'lyric')?.text).toBe('Hello world');
+  });
+
+  it('emits orphaned chord line (followed by another chord line) as chord-only', () => {
+    const doc = parseChordPro('Am G\nC F\nLyrics here');
+    const lines = doc.sections[0].lines;
+    // First line: Am G (orphaned — next is chord line)
+    expect(lines[0].tokens.every((t) => t.kind === 'chord')).toBe(true);
+    // Second line: C F paired with lyrics
+    expect(lines[1].tokens.some((t) => t.kind === 'lyric')).toBe(true);
+  });
+
+  it('does not pair a chord line with a following UG section header', () => {
+    const doc = parseChordPro('Am G\n[Chorus]\n[C]sing');
+    const lines = doc.sections[0].lines;
+    expect(lines[0].tokens.every((t) => t.kind === 'chord')).toBe(true);
+  });
+
+  it('does not pair a chord line with a following bracket-chord line', () => {
+    const doc = parseChordPro('Am G\n[C]inline chords');
+    const lines = doc.sections[0].lines;
+    expect(lines[0].tokens.every((t) => t.kind === 'chord')).toBe(true);
+    expect(lines[1].tokens[0]).toMatchObject({ kind: 'chord', text: 'C' });
+  });
+
+  it('handles blank lines between chord line and lyric line', () => {
+    const doc = parseChordPro('Am  G\n\nHello world');
+    const tokens = doc.sections[0].lines[0].tokens;
+    expect(tokens.filter((t) => t.kind === 'chord').map((t) => t.text)).toEqual(['Am', 'G']);
+    expect(tokens.find((t) => t.kind === 'lyric')?.text).toBe('Hello world');
+  });
+
+  it('UG-format file with mixed inline and COW chords parses both correctly', () => {
+    const text = '[Verse 1]\nAm  G\nWords here\n[Chorus]\n[C]Sing [G]it';
+    const doc = parseUltimateGuitar(text);
+    const verse = doc.sections.find((s) => s.type === 'verse');
+    const chorus = doc.sections.find((s) => s.type === 'chorus');
+    expect(verse!.lines[0].tokens.some((t) => t.kind === 'chord')).toBe(true);
+    expect(verse!.lines[0].tokens.some((t) => t.kind === 'lyric')).toBe(true);
+    expect(chorus!.lines[0].tokens[0]).toMatchObject({ kind: 'chord', text: 'C' });
+  });
+});
+
 // ─── 7. parseChordChart dispatch ─────────────────────────────────────────────
 
 describe('parseChordChart — dispatch', () => {

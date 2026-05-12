@@ -138,6 +138,14 @@ function makeSection(type: SectionType = 'unknown', label?: string): ChartSectio
   return { type, label, lines: [] };
 }
 
+/** Return true when every non-empty token in the line looks like a chord name. */
+function isChordLine(line: string): boolean {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 1) return false;
+  const chordCount = tokens.filter((t) => CHORD_TOKEN_RE.test(t)).length;
+  return chordCount >= 1 && chordCount / tokens.length >= 0.7;
+}
+
 /**
  * Parse a single line that may contain inline bracket-chord tokens.
  * e.g. "[Am]Hello [G]world" → [{chord:'Am'},{lyric:'Hello '},{chord:'G'},{lyric:'world'}]
@@ -182,8 +190,12 @@ export function parseChordPro(text: string): ChordChartDocument {
   const doc: ChordChartDocument = { sections: [], sourceFormat: 'chordpro' };
   let current = makeSection();
 
-  for (const rawLine of normalizeLineEndings(text).split('\n')) {
-    const trimmed = rawLine.trim();
+  const rawLines = normalizeLineEndings(text).split('\n');
+  let i = 0;
+
+  while (i < rawLines.length) {
+    const trimmed = rawLines[i].trim();
+    i++;
 
     // Blank lines act as soft section separators in un-directed files
     if (!trimmed) continue;
@@ -250,6 +262,33 @@ export function parseChordPro(text: string): ChordChartDocument {
       continue;
     }
 
+    // ── Chords-over-words: plain chord line stacked above a lyric line ──
+    if (isChordLine(trimmed)) {
+      const chordTokens: ChartToken[] = trimmed
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((t) => ({ kind: 'chord' as const, text: t }));
+      // Peek ahead (skipping blank lines) to find the next content line.
+      let j = i;
+      while (j < rawLines.length && !rawLines[j].trim()) j++;
+      const nextTrimmed = rawLines[j]?.trim() ?? '';
+      if (
+        nextTrimmed &&
+        !isChordLine(nextTrimmed) &&
+        !nextTrimmed.startsWith('{') &&
+        !UG_SECTION_RE.test(nextTrimmed) &&
+        !nextTrimmed.startsWith('%') &&
+        !nextTrimmed.includes('|') &&
+        !nextTrimmed.includes('[')
+      ) {
+        current.lines.push({ tokens: [...chordTokens, { kind: 'lyric', text: nextTrimmed }] });
+        i = j + 1;
+      } else {
+        current.lines.push({ tokens: chordTokens });
+      }
+      continue;
+    }
+
     // ── Plain lyric / text line ──
     current.lines.push({ tokens: [{ kind: 'lyric', text: trimmed }] });
   }
@@ -271,14 +310,6 @@ export function parseUltimateGuitar(text: string): ChordChartDocument {
 }
 
 // ─── 3. Chords-over-words parser ─────────────────────────────────────────────
-
-/** Return true when every non-empty token in the line looks like a chord name. */
-function isChordLine(line: string): boolean {
-  const tokens = line.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length < 1) return false;
-  const chordCount = tokens.filter((t) => CHORD_TOKEN_RE.test(t)).length;
-  return chordCount >= 1 && chordCount / tokens.length >= 0.7;
-}
 
 /**
  * Parse "chords-over-lyrics" format: each chord line sits immediately above
