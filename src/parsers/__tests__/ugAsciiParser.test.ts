@@ -77,6 +77,19 @@ describe('isChordLine', () => {
     expect(isChordLine('')).toBe(false);
     expect(isChordLine('   ')).toBe(false);
   });
+
+  it('detects pipe-grid chord lines (|Chord |Chord |...)', () => {
+    expect(isChordLine('|Am  |G   |C   |F   |')).toBe(true);
+    expect(isChordLine('|Dm7 |G7  |Cmaj7    |')).toBe(true);
+    expect(isChordLine('|D#m7       |C#/F        |F#  |G°7  |')).toBe(true);
+  });
+
+  it('treats % repeat markers as non-tokens (skipped, not counted against chord ratio)', () => {
+    // "|Bb9 |% |% |%|" — only 1 chord token after skipping %, still a chord line
+    expect(isChordLine('|Bb9  |%   |%   |%   |')).toBe(true);
+    // All %-only grid line: not a chord line
+    expect(isChordLine('|%   |%   |%   |%   |')).toBe(false);
+  });
 });
 
 // ─── normalizeChord ───────────────────────────────────────────────────────────
@@ -271,6 +284,34 @@ describe('guessGenre', () => {
     const g = guessGenre(zeroHf, EMPTY_DENSITIES, null);
     expect(g.primary).toBe('unknown');
   });
+
+  it('dom7 alone does NOT trigger jazz lyric-sparsity bonus (blues disambiguation)', () => {
+    // A blues song: heavy dom7, lyrics, no specifically-jazz harmony
+    const bluesHf: HarmonicFingerprint = {
+      cowboyChordShare: 0.02, dom7Rate: 0.50, maj7Rate: 0, min7b5Rate: 0,
+      altRate: 0, powerChordRate: 0, iiVRate: 0, simpleMajMinRate: 0.48,
+    };
+    const g = guessGenre(bluesHf, { ...EMPTY_DENSITIES, lyricDensity: 0.30, gridDensity: 0.10 }, null);
+    // Without jazzSpecificSignal fix, this would classify as jazz.
+    // With the fix, rock_blues should win (dom7 + lyrics).
+    expect(g.primary).toBe('rock_blues');
+  });
+
+  it('jazz lyric-sparsity bonus fires when jazzSpecificSignal ≥ 1.0', () => {
+    // Specifically jazz: maj7 + min7b5 + iiV, no lyrics (instrumental chart)
+    const jazzInstrumentalHf: HarmonicFingerprint = {
+      cowboyChordShare: 0, dom7Rate: 0.15, maj7Rate: 0.25, min7b5Rate: 0.10,
+      altRate: 0, powerChordRate: 0, iiVRate: 0.20, simpleMajMinRate: 0.10,
+    };
+    const g = guessGenre(
+      jazzInstrumentalHf,
+      { ...EMPTY_DENSITIES, lyricDensity: 0.05, gridDensity: 0.50 },
+      null,
+    );
+    expect(g.primary).toBe('jazz');
+    // And the score should reflect the lyric-density bonus
+    expect(g.scores.jazz).toBeGreaterThan(3);
+  });
 });
 
 // ─── extractTextMetadata ─────────────────────────────────────────────────────
@@ -331,6 +372,19 @@ describe('computeDensities', () => {
     expect(d.tabDensity).toBeCloseTo(4 / 7);
     expect(d.sectionDensity).toBeCloseTo(1 / 7);
     expect(d.lyricDensity).toBeCloseTo(1 / 7);
+  });
+
+  it('pipe-grid chord lines count toward gridDensity, not lyricDensity', () => {
+    const lines = [
+      '|Am  |G   |C   |F   |',   // grid chord line
+      '|Dm7 |G7  |Cmaj7    |',   // grid chord line
+      'Hello world',              // lyric
+    ];
+    const tabFlags   = lines.map((l) => isTabLine(l));
+    const chordFlags = lines.map((l, i) => !tabFlags[i] && isChordLine(l));
+    const d = computeDensities(lines, tabFlags, chordFlags);
+    expect(d.gridDensity).toBeCloseTo(2 / 3);
+    expect(d.lyricDensity).toBeCloseTo(1 / 3);
   });
 });
 
@@ -431,6 +485,29 @@ describe('parseUgAscii', () => {
     expect(() => parseUgAscii('')).not.toThrow();
     const m = parseUgAscii('');
     expect(m.analytics.genreGuess.primary).toBe('unknown');
+  });
+
+  it('extracts chord events from pipe-grid format lines', () => {
+    const grid = `[Intro]
+|Am  |G   |C   |F   |
+|Dm7 |G7  |Cmaj7    |Am  |`;
+    const m = parseUgAscii(grid);
+    // Should extract chords from both grid lines (4 + 4 = 8)
+    expect(m.harmony.events.length).toBe(8);
+    // gridDensity should be non-zero (2 out of 3 non-empty non-section lines are grid)
+    expect(m.analytics.density.gridDensity).toBeGreaterThan(0);
+    // Lyric lines should not include grid lines
+    expect(m.lyrics.lines.length).toBe(0);
+  });
+
+  it('skips % repeat markers in pipe-grid lines', () => {
+    const grid = `[Solo]
+|Bb9  |%   |%   |%   |
+|Eb9  |%   |Bb9  |%   |`;
+    const m = parseUgAscii(grid);
+    // Only real chord tokens — % markers are skipped
+    // Line 1: Bb9 (% × 3 skipped); Line 2: Eb9, Bb9 (% × 2 skipped)
+    expect(m.harmony.events.map((e) => e.symbol)).toEqual(['Bb9', 'Eb9', 'Bb9']);
   });
 
   it('Bug #13 fix: is importable as named ESM export (this test runs)', () => {
