@@ -1356,33 +1356,75 @@ function resolveMeasureOrder(
   measures: MeasureData[],
   options: ConvertOptions,
   warnings: string[],
-  diagnostics: ConverterDiagnostics
+  _diagnostics: ConverterDiagnostics
 ): number[] {
-  const baseOrder = measures.map((measure) => measure.measureIndex);
   if (options.repeatStrategy !== "simple-unroll") {
-    return baseOrder;
+    return measures.map((m) => m.measureIndex);
   }
 
-  if (diagnostics.endingsFound > 0) {
-    warnings.push("unsupported endings");
-    return baseOrder;
+  const result: number[] = [];
+  let i = 0;
+
+  while (i < measures.length) {
+    if (!measures[i].repeatStart) {
+      result.push(measures[i].measureIndex);
+      i++;
+      continue;
+    }
+
+    // Locate the matching backward-repeat barline.
+    let j = i + 1;
+    while (j < measures.length && !measures[j].repeatEnd) j++;
+
+    if (j >= measures.length) {
+      // Unmatched forward repeat — emit linearly and move on.
+      result.push(measures[i].measureIndex);
+      i++;
+      continue;
+    }
+
+    // Does this section have 1st/2nd-ending (volta) brackets?
+    const hasVolta = measures.slice(i, j + 1).some((m) => m.endings && m.endings.length > 0);
+
+    if (!hasVolta) {
+      // Simple repeat: play the block twice.
+      for (let k = i; k <= j; k++) result.push(measures[k].measureIndex);
+      for (let k = i; k <= j; k++) result.push(measures[k].measureIndex);
+      i = j + 1;
+    } else {
+      // 1st/2nd-ending pattern:
+      //   pass 1 → common measures + 1st-ending measures
+      //   pass 2 → common measures + 2nd-ending measures (which follow j)
+      const firstEnding1 = measures.findIndex((m, idx) => idx >= i && idx <= j && !!m.endings?.includes(1));
+      const commonEnd = firstEnding1 >= 0 ? firstEnding1 : j + 1;
+
+      // Collect 2nd-ending measures (endings contain 2, appear immediately after j).
+      const ending2Indices: number[] = [];
+      let k = j + 1;
+      while (k < measures.length && measures[k].endings?.includes(2)) {
+        ending2Indices.push(k);
+        k++;
+      }
+
+      if (firstEnding1 >= 0 && ending2Indices.length > 0) {
+        // Pass 1: common + 1st ending
+        for (let k = i; k < commonEnd; k++) result.push(measures[k].measureIndex);
+        for (let k = firstEnding1; k <= j; k++) result.push(measures[k].measureIndex);
+        // Pass 2: common + 2nd ending
+        for (let k = i; k < commonEnd; k++) result.push(measures[k].measureIndex);
+        for (const k of ending2Indices) result.push(measures[k].measureIndex);
+        i = ending2Indices[ending2Indices.length - 1] + 1;
+      } else {
+        // Incomplete volta info — double the whole block and warn.
+        warnings.push("Volta brackets detected but could not be fully resolved — section doubled without endings.");
+        for (let k = i; k <= j; k++) result.push(measures[k].measureIndex);
+        for (let k = i; k <= j; k++) result.push(measures[k].measureIndex);
+        i = j + 1;
+      }
+    }
   }
 
-  const startIdx = measures.findIndex((measure) => measure.repeatStart);
-  if (startIdx < 0) {
-    return baseOrder;
-  }
-  const endIdx = measures.findIndex((measure, index) => index > startIdx && measure.repeatEnd);
-  if (endIdx < 0) {
-    return baseOrder;
-  }
-
-  const duplicatedRange = baseOrder.slice(startIdx, endIdx + 1);
-  return [
-    ...baseOrder.slice(0, endIdx + 1),
-    ...duplicatedRange,
-    ...baseOrder.slice(endIdx + 1),
-  ];
+  return result;
 }
 
 function parseEndings(measureEl: Element): number[] {
