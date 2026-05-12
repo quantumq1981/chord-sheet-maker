@@ -452,6 +452,17 @@ function serializeChordProFromDocument(doc: ChordChartDocument, transposeSteps: 
     }
 
     for (const line of section.lines) {
+      // Grid lines from pipe-bar-grid source: always serialize as | chord | chord | ...
+      // This preserves the original structure regardless of export mode.
+      if (line.isGrid) {
+        const chords = line.tokens
+          .filter((token) => token.kind === 'chord')
+          .map((token) => (transposeSteps !== 0 ? transposeChord(token.text, transposeSteps, enharmonicPref) : token.text));
+        if (chords.length === 0) continue;
+        lines.push('| ' + chords.join(' | ') + ' |');
+        continue;
+      }
+
       if (isGridOnly) {
         const chords = line.tokens
           .filter((token) => token.kind === 'chord')

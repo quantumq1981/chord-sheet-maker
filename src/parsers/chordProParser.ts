@@ -73,6 +73,34 @@ const UG_SECTION_RE =
 const CHORD_TOKEN_RE =
   /^[A-G][#b]?(?:m(?:aj)?|M|maj|min|dim|aug|sus[24]?|add\d*)?(?:\d+)?(?:\/[A-G][#b]?)?$/;
 
+/**
+ * Extended chord token regex for pipe-grid detection — covers the richer
+ * notation found in UG Pro exports: D#m7, C#M7, A#m7b5, G°7, EM7/F#, etc.
+ */
+const GRID_CHORD_RE =
+  /^[A-G][#b]?[mMajdinugs°øØ+Δ#bA-G0-9/()]{0,12}$/;
+
+/** Tokens to skip (not chords, not lyrics) when parsing grid lines. */
+const GRID_SKIP_TOKENS = new Set(['%', 'N.C.', 'NC', 'N/A', 'x', 'X']);
+
+/**
+ * Try to parse a pipe-bar-grid line (|Chord |Chord |...) into a ChartLine
+ * with chord tokens and isGrid=true. Returns null if the line does not look
+ * like a grid line (< 40% of non-skip tokens are recognisable chords).
+ */
+function parseGridLine(line: string): ChartLine | null {
+  if (!line.includes('|')) return null;
+  const stripped = line.replace(/\|/g, ' ');
+  const allTokens = stripped.trim().split(/\s+/).filter((t) => t && !GRID_SKIP_TOKENS.has(t));
+  if (allTokens.length === 0) return null;
+  const chordTokens = allTokens.filter((t) => GRID_CHORD_RE.test(t));
+  if (chordTokens.length < 1 || chordTokens.length / allTokens.length < 0.4) return null;
+  return {
+    tokens: chordTokens.map((t) => ({ kind: 'chord' as const, text: t })),
+    isGrid: true,
+  };
+}
+
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 function normalizeLineEndings(text: string): string {
@@ -207,6 +235,12 @@ export function parseChordPro(text: string): ChordChartDocument {
       const label = trimmed.slice(1, -1); // strip []
       current = makeSection(sectionTypeFromLabel(label), label);
       continue;
+    }
+
+    // ── Pipe-bar-grid line: |Chord |Chord |... ──
+    if (trimmed.includes('|')) {
+      const gridLine = parseGridLine(trimmed);
+      if (gridLine) { current.lines.push(gridLine); continue; }
     }
 
     // ── Content line (may have inline [chord] tokens) ──

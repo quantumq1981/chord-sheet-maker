@@ -33,6 +33,8 @@ export type ChartToken = ChordToken | LyricToken | CommentToken;
 
 export interface ChartLine {
   tokens: ChartToken[];
+  /** True when this line was parsed from a pipe-bar-grid format: |Chord |Chord |... */
+  isGrid?: boolean;
 }
 
 // ─── Section ─────────────────────────────────────────────────────────────────
