@@ -1409,3 +1409,173 @@ select:disabled {
 
   .empty-state { min-height: 50vh; padding: var(--space-4); }
 }
+
+/* ─── Song Analytics Panel ──────────────────────────────────────────────────── */
+
+.analytics-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: 0.82rem;
+}
+
+/* Tier + format badges */
+.analytics-badges {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.analytics-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.analytics-badge--tier {
+  background: var(--brand-light);
+  color: var(--brand);
+  border: 1px solid var(--brand-border);
+}
+
+.analytics-badge--format {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  text-transform: capitalize;
+}
+
+/* Detected metadata list */
+.analytics-meta-list {
+  margin: 0;
+  padding: 0 0 0 var(--space-4);
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* Genre row */
+.analytics-genre {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.analytics-genre__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.analytics-genre__label {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.analytics-genre__confidence {
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+}
+
+.analytics-genre__bar {
+  height: 6px;
+}
+
+/* Rate bars */
+.analytics-fingerprint,
+.analytics-content-density {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.analytics-sub-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 var(--space-1) 0;
+}
+
+.analytics-rate-row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 2.5rem;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.analytics-rate-label {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analytics-rate-track {
+  height: 5px;
+  background: var(--border);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.analytics-rate-fill {
+  height: 100%;
+  background: var(--brand);
+  border-radius: var(--radius-full);
+  transition: width 0.3s ease;
+}
+
+.analytics-rate-value {
+  text-align: right;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+}
+
+/* Loss flags */
+.analytics-loss-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.analytics-loss-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  border: 1px solid;
+}
+
+.analytics-loss-flag--ok {
+  background: var(--success-light);
+  color: var(--success);
+  border-color: var(--success-border);
+}
+
+.analytics-loss-flag--missing {
+  background: var(--surface-muted);
+  color: var(--text-subtle);
+  border-color: var(--border);
+}
+
+/* Warnings */
+.analytics-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.analytics-warning-item {
+  padding: var(--space-1) var(--space-2);
+  background: var(--warning-light);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-sm);
+  color: var(--warning);
+  font-size: 0.78rem;
+}

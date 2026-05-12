@@ -30,7 +30,10 @@ import {
 } from './converters/guitarProConverter';
 import { transposeMusicXML } from './converters/transposeMusicXML';
 import { parseChordChart } from './parsers/chordProParser';
+import { parseUgAscii } from './parsers/ugAsciiParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
+import type { UnifiedSongModel } from './types/unifiedSongModel';
+import SongAnalyticsPanel from './components/SongAnalyticsPanel';
 import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
 import {
@@ -706,6 +709,7 @@ export default function App() {
 
   // ── Chord-chart mode state ──
   const [chartDocument, setChartDocument] = useState<ChordChartDocument | null>(null);
+  const [songModel, setSongModel] = useState<UnifiedSongModel | null>(null);
   const [transposeSemitones, setTransposeSemitones] = useState(0);
   const [transposeEnharmonic, setTransposeEnharmonic] = useState<EnharmonicPreference>('auto');
   const [transposeWarnings, setTransposeWarnings] = useState<string[]>([]);
@@ -926,6 +930,7 @@ export default function App() {
     setRenderError('');
     setExportFeedback({ type: 'success', message: 'OMR conversion completed and score loaded.' });
     setChartDocument(null);
+    setSongModel(null);
     setTransposeWarnings([]);
     setDetectedFormatLabel(loadedFromMxl ? 'MXL (OMR)' : 'MusicXML (OMR)');
     setAppMode('notation');
@@ -1007,6 +1012,7 @@ export default function App() {
     if (containerRef.current) containerRef.current.innerHTML = '';
     // Chart
     setChartDocument(null);
+    setSongModel(null);
     setTransposeSemitones(0);
     setTransposeWarnings([]);
     setDetectedFormatLabel('');
@@ -1063,6 +1069,7 @@ export default function App() {
         setCsmpnWarnings([]);
         // Clear chord-chart state
         setChartDocument(null);
+        setSongModel(null);
         setDetectedFormatLabel(detected.format === 'mxl' ? 'MXL' : 'MusicXML');
         setTransposeWarnings([]);
         setChartChordProText('');
@@ -1099,6 +1106,7 @@ export default function App() {
         setCsmpnFakeBookText('');
         setCsmpnWarnings([]);
         setChartDocument(null);
+        setSongModel(null);
         setTransposeWarnings([]);
         setChartChordProText('');
         setChartChordProWarnings([]);
@@ -1110,18 +1118,27 @@ export default function App() {
       } else if (isChordChartFormat(detected)) {
         // ── Chord-chart path ──
         const text = new TextDecoder('utf-8').decode(bytes);
-        const sourceFormat = asSourceFormat(detected)!;
+
+        // ascii_tab has no ChordPro-syntax source format; map to chordpro so
+        // parseChordChart renders the content (tab lines appear as plain text).
+        const sourceFormat = detected.format === 'ascii_tab'
+          ? 'chordpro'
+          : asSourceFormat(detected)!;
         const doc = parseChordChart(text, sourceFormat);
+
+        // Unified Song Model — analytics for any text-based chord/tab file
+        setSongModel(parseUgAscii(text, { title: doc.title, artist: doc.artist }));
 
         const formatLabels: Record<string, string> = {
           chordpro: 'ChordPro',
           ultimateguitar: 'Ultimate Guitar',
           'chords-over-words': 'Chords over Words',
+          ascii_tab: 'ASCII Tab',
         };
 
         setLoadedFilename(file.name);
         setChartDocument(doc);
-        setDetectedFormatLabel(formatLabels[sourceFormat] ?? sourceFormat);
+        setDetectedFormatLabel(formatLabels[detected.format] ?? detected.format);
         setTransposeWarnings([]);
         const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi, transposeEnharmonic);
         setChartChordProText(chartExport.text);
@@ -2152,6 +2169,14 @@ export default function App() {
                   <li><strong>Sections:</strong> {chartDocument.sections.length}</li>
                 </ul>
               </div>
+
+              {/* ── Song Analytics (USM) ── */}
+              {songModel && (
+                <div className="panel-section">
+                  <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>Song Analytics</h2>
+                  <SongAnalyticsPanel model={songModel} />
+                </div>
+              )}
 
               <div className="panel-section">
               <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>ChordPro Export</h2>
