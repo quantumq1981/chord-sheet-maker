@@ -205,7 +205,7 @@ describe('multi-measure layout', () => {
 // ─── 12. Simple repeat unroll ────────────────────────────────────────────────
 
 describe('repeat unroll', () => {
-  it('simple-unroll duplicates the repeated section', () => {
+  it('simple-unroll duplicates a single repeated section', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0">
   <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
@@ -228,6 +228,91 @@ describe('repeat unroll', () => {
     const chordMatches = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
     expect(chordMatches('C')).toBe(2);
     expect(chordMatches('G7')).toBe(2);
+  });
+
+  it('simple-unroll handles multiple independent repeat sections', () => {
+    // |: C :| |: F | G :|  →  C C F G F G
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <barline location="left"><repeat direction="forward"/></barline>
+      ${harmonyXml('C', 'major')}
+      <barline location="right"><repeat direction="backward"/></barline>
+    </measure>
+    <measure number="2">
+      <barline location="left"><repeat direction="forward"/></barline>
+      ${harmonyXml('F', 'major')}
+    </measure>
+    <measure number="3">
+      ${harmonyXml('G', 'dominant')}
+      <barline location="right"><repeat direction="backward"/></barline>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    expect(countOf('C')).toBe(2);
+    expect(countOf('F')).toBe(2);
+    expect(countOf('G7')).toBe(2);
+  });
+
+  it('simple-unroll expands 1st/2nd endings (volta brackets)', () => {
+    // |: C | [1st] F :| [2nd] G |
+    // Pass 1: C F  — Pass 2: C G
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      <barline location="left"><repeat direction="forward"/></barline>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      <barline location="left"><ending number="1" type="start"/></barline>
+      ${harmonyXml('F', 'major')}
+      <barline location="right"><ending number="1" type="stop"/><repeat direction="backward"/></barline>
+    </measure>
+    <measure number="3">
+      <barline location="left"><ending number="2" type="start"/></barline>
+      ${harmonyXml('G', 'dominant')}
+      <barline location="right"><ending number="2" type="stop"/></barline>
+    </measure>
+  </part>
+</score-partwise>`;
+
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    // Common section appears on both passes
+    expect(countOf('C')).toBe(2);
+    // 1st ending: pass 1 only
+    expect(countOf('F')).toBe(1);
+    // 2nd ending: pass 2 only
+    expect(countOf('G7')).toBe(1);
+  });
+
+  it('simple-unroll with no repeat markers returns base order unchanged', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      ${harmonyXml('G', 'dominant')}
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    expect(countOf('C')).toBe(1);
+    expect(countOf('G7')).toBe(1);
   });
 });
 
