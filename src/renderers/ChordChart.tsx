@@ -127,9 +127,33 @@ interface LineProps {
   pref: EnharmonicPreference;
 }
 
+/**
+ * Grid row: renders a pipe-bar-grid line as a row of equal-width measure cells,
+ * each showing a chord name with a visible bar-line separator.
+ * Each cell = one bar from the original |Chord |Chord |... source line.
+ */
+function GridRow({ line, steps, pref }: LineProps) {
+  const chords = line.tokens.filter((t) => t.kind === 'chord');
+  if (chords.length === 0) return null;
+  return (
+    <div className="cc-line cc-grid-line">
+      {chords.map((t, i) => (
+        <span key={i} className="cc-grid-cell">
+          <ChordSpan text={t.text} steps={steps} pref={pref} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function LineRow({ line, steps, pref }: LineProps) {
   const { tokens } = line;
   if (tokens.length === 0) return null;
+
+  // Pipe-bar-grid line
+  if (line.isGrid) {
+    return <GridRow line={line} steps={steps} pref={pref} />;
+  }
 
   // Single comment token
   if (tokens.length === 1 && tokens[0].kind === 'comment') {

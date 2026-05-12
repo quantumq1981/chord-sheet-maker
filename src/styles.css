@@ -910,6 +910,26 @@ select:disabled {
   padding-right: 0.3em;
 }
 
+/* ── Bar-grid lines (|Chord |Chord |...) ─────────────────────────────────── */
+.cc-grid-line {
+  display: flex;
+  flex-wrap: wrap;
+  border-left: 2px solid var(--border);
+  margin-bottom: 0.35rem;
+}
+
+.cc-grid-cell {
+  border-right: 2px solid var(--border);
+  padding: 0.25rem 0.6rem;
+  min-width: 5rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.cc-grid-cell .cc-chord {
+  padding-right: 0;  /* override the chord span default so centering is correct */
+}
+
 .cc-comment {
   font-style: italic;
   color: var(--text-subtle);

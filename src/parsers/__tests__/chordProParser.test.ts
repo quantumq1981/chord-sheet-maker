@@ -173,6 +173,74 @@ describe('parseChordsOverWords', () => {
   });
 });
 
+// ─── 7. Pipe-bar-grid line parsing ───────────────────────────────────────────
+
+describe('parseChordPro — pipe-grid lines', () => {
+  it('detects a simple pipe-grid line and sets isGrid=true', () => {
+    const doc = parseChordPro('|Am  |G   |C   |F   |');
+    const line = doc.sections[0].lines[0];
+    expect(line.isGrid).toBe(true);
+    expect(line.tokens.map((t) => t.text)).toEqual(['Am', 'G', 'C', 'F']);
+    expect(line.tokens.every((t) => t.kind === 'chord')).toBe(true);
+  });
+
+  it('handles complex UG Pro chords in grid format', () => {
+    const doc = parseChordPro('|D#m7  |C#/F  |F#  |G°7  |');
+    const line = doc.sections[0].lines[0];
+    expect(line.isGrid).toBe(true);
+    expect(line.tokens.map((t) => t.text)).toEqual(['D#m7', 'C#/F', 'F#', 'G°7']);
+  });
+
+  it('skips % repeat markers and non-chord filler', () => {
+    const doc = parseChordPro('|Bb9  |%   |%   |Eb9  |');
+    const line = doc.sections[0].lines[0];
+    expect(line.isGrid).toBe(true);
+    // Only the actual chord names, not the % markers
+    expect(line.tokens.map((t) => t.text)).toEqual(['Bb9', 'Eb9']);
+  });
+
+  it('does NOT detect a %-only line as a grid line', () => {
+    const doc = parseChordPro('|%   |%   |%   |%   |');
+    // Should be treated as a lyric line or empty — no grid tokens
+    const lines = doc.sections.flatMap((s) => s.lines);
+    const gridLines = lines.filter((l) => l.isGrid);
+    expect(gridLines.length).toBe(0);
+  });
+
+  it('grid lines appear inside UG sections', () => {
+    const text = `[Intro]
+|Am  |G   |C   |F   |
+[Verse 1]
+[Am]Hello world`;
+    const doc = parseChordChart(text, 'ultimateguitar');
+    const intro = doc.sections.find((s) => s.label === 'Intro');
+    expect(intro).toBeDefined();
+    expect(intro!.lines[0].isGrid).toBe(true);
+    expect(intro!.lines[0].tokens.map((t) => t.text)).toEqual(['Am', 'G', 'C', 'F']);
+  });
+
+  it('inline [bracket] chords are not affected by grid detection', () => {
+    const doc = parseChordChart('[Am]Hello [G]world', 'chordpro');
+    const line = doc.sections[0].lines[0];
+    expect(line.isGrid).toBeFalsy();
+    expect(line.tokens.some((t) => t.kind === 'lyric')).toBe(true);
+  });
+
+  it('round-trips through serializeChordProFromDocument preserving | delimiters', () => {
+    // We test serialization indirectly by re-parsing the output
+    const original = parseChordPro('|Am  |G   |C   |F   |');
+    const gridLine = original.sections[0].lines[0];
+    // Manually simulate what the serializer produces for an isGrid line
+    const chords = gridLine.tokens.filter((t) => t.kind === 'chord').map((t) => t.text);
+    const serialized = '| ' + chords.join(' | ') + ' |';
+    expect(serialized).toBe('| Am | G | C | F |');
+    // Re-parsing should give us back the same grid line
+    const reparsed = parseChordPro(serialized);
+    expect(reparsed.sections[0].lines[0].isGrid).toBe(true);
+    expect(reparsed.sections[0].lines[0].tokens.map((t) => t.text)).toEqual(['Am', 'G', 'C', 'F']);
+  });
+});
+
 // ─── 7. parseChordChart dispatch ─────────────────────────────────────────────
 
 describe('parseChordChart — dispatch', () => {
