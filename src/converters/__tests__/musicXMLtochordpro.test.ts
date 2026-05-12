@@ -316,6 +316,131 @@ describe('repeat unroll', () => {
   });
 });
 
+// ─── 12b. D.C./D.S. navigation instructions ──────────────────────────────────
+
+describe('D.C./D.S. navigation expansion', () => {
+  // Score: A(C) | B(F) | Fine | C(G) | D.C. al Fine
+  // Expected play order: A B C_Fine A B_Fine  → C x2, F x2, G x1
+  it('D.C. al Fine: plays body then repeats from top to Fine', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      ${harmonyXml('F', 'major')}
+      <direction><direction-type><words>Fine</words></direction-type></direction>
+    </measure>
+    <measure number="3">
+      ${harmonyXml('G', 'dominant')}
+      <direction><direction-type><words>D.C. al Fine</words></direction-type></direction>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    // C appears in measures 1 (first pass) + 1 (D.C. return) = 2
+    expect(countOf('C')).toBe(2);
+    // F (with Fine) appears in measures 2 (first pass) + 2 (D.C. return) = 2
+    expect(countOf('F')).toBe(2);
+    // G appears only in first pass (not played on D.C. return)
+    expect(countOf('G7')).toBe(1);
+  });
+
+  // Score: A(C) | segno | B(F) | C(Am) | D.S. al Fine | (coda)
+  // Fine is on measure B(F), so D.S. plays from segno to Fine
+  it('D.S. al Fine: plays from segno to Fine on repeat', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      <direction><direction-type><segno/></direction-type></direction>
+      ${harmonyXml('F', 'major')}
+      <direction><direction-type><words>Fine</words></direction-type></direction>
+    </measure>
+    <measure number="3">
+      ${harmonyXml('A', 'minor')}
+      <direction><direction-type><words>D.S. al Fine</words></direction-type></direction>
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    // C: only first pass (not after segno)
+    expect(countOf('C')).toBe(1);
+    // F: first pass + D.S. return (segno to Fine)
+    expect(countOf('F')).toBe(2);
+    // Am: first pass only
+    expect(countOf('Am')).toBe(1);
+  });
+
+  // Score: A(C) | B(F) | coda-jump(Am) | D.C. al Coda | [coda] Coda(G)
+  // Play: A B Am D.C.  →  return to A B Am (to coda) → jump → G
+  it('D.C. al Coda: plays body, returns to top, jumps to Coda section', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      ${harmonyXml('F', 'major')}
+    </measure>
+    <measure number="3">
+      <direction><direction-type><coda/></direction-type></direction>
+      ${harmonyXml('A', 'minor')}
+      <direction><direction-type><words>D.C. al Coda</words></direction-type></direction>
+    </measure>
+    <measure number="4">
+      <direction><direction-type><coda/></direction-type></direction>
+      ${harmonyXml('G', 'dominant')}
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    // C: first pass + D.C. return = 2
+    expect(countOf('C')).toBe(2);
+    // F: first pass + D.C. return = 2
+    expect(countOf('F')).toBe(2);
+    // Am (To Coda marker measure): first pass + D.C. return to coda = 2
+    expect(countOf('Am')).toBe(2);
+    // G: Coda section only = 1
+    expect(countOf('G7')).toBe(1);
+  });
+
+  // Score without navigation instruction — should be unaffected
+  it('no navigation instruction: unaffected by D.C./D.S. logic', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>1</divisions></attributes>
+      ${harmonyXml('C', 'major')}
+    </measure>
+    <measure number="2">
+      ${harmonyXml('F', 'major')}
+    </measure>
+  </part>
+</score-partwise>`;
+    const { chordPro } = convert(xml, { repeatStrategy: 'simple-unroll' });
+    const countOf = (chord: string) => (chordPro.match(new RegExp(`\\[${chord}\\]`, 'g')) ?? []).length;
+    expect(countOf('C')).toBe(1);
+    expect(countOf('F')).toBe(1);
+  });
+});
+
 // ─── 13. Fake Book format ─────────────────────────────────────────────────────
 
 describe('fakebook format', () => {

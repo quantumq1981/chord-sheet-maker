@@ -730,6 +730,7 @@ export default function App() {
   const [chartChordProText, setChartChordProText] = useState('');
   const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
   const [chartTwoColumn, setChartTwoColumn] = useState(false);
+  const [chartFontSize, setChartFontSize] = useState(100);
 
   // ── Tablature mode state ──
   const [tabTuning, setTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
@@ -2202,7 +2203,7 @@ export default function App() {
             onDrop={onDrop}
           >
             {chartDocument && (
-              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} enharmonicPreference={transposeEnharmonic} twoColumn={chartTwoColumn} />
+              <ChordChart document={chartDocument} transposeSteps={transposeSemitones} enharmonicPreference={transposeEnharmonic} twoColumn={chartTwoColumn} fontSize={chartFontSize} />
             )}
           </section>
         ) : appMode === 'tablature' ? (
@@ -2362,6 +2363,19 @@ export default function App() {
                   />
                   2-column layout
                 </label>
+                <label className="export-label" htmlFor="chart-font-size" style={{ marginBottom: '0.2rem' }}>
+                  Font Size: {chartFontSize}%
+                </label>
+                <input
+                  id="chart-font-size"
+                  type="range"
+                  min={70}
+                  max={140}
+                  step={5}
+                  value={chartFontSize}
+                  onChange={(e) => setChartFontSize(Number(e.target.value))}
+                  style={{ width: '100%', marginBottom: '0.6rem' }}
+                />
                 <label className="export-label" htmlFor="chart-pdf-size">Page Size</label>
                 <select
                   id="chart-pdf-size"

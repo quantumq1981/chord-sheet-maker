@@ -225,14 +225,19 @@ export interface ChordChartProps {
   enharmonicPreference?: EnharmonicPreference;
   /** Render sections in two newspaper-style columns for compact print layout. */
   twoColumn?: boolean;
+  /** Font size as a percentage of the base size (default 100). */
+  fontSize?: number;
 }
 
-export default function ChordChart({ document: doc, transposeSteps = 0, enharmonicPreference = 'auto', twoColumn = false }: ChordChartProps) {
+export default function ChordChart({ document: doc, transposeSteps = 0, enharmonicPreference = 'auto', twoColumn = false, fontSize = 100 }: ChordChartProps) {
   const displayKey =
     doc.key ? transposeChord(doc.key, transposeSteps, enharmonicPreference) : undefined;
 
   return (
-    <div className={twoColumn ? 'chord-chart chord-chart--two-col' : 'chord-chart'}>
+    <div
+      className={twoColumn ? 'chord-chart chord-chart--two-col' : 'chord-chart'}
+      style={fontSize !== 100 ? { fontSize: `${fontSize}%` } : undefined}
+    >
       {(doc.title || doc.artist) && (
         <div className="cc-header">
           {doc.title && <h2 className="cc-title">{doc.title}</h2>}
