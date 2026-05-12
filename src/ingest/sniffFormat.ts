@@ -24,6 +24,7 @@ export type DetectedFormat =
   | { format: 'chordpro' }
   | { format: 'ultimateguitar' }
   | { format: 'chords-over-words' }
+  | { format: 'ascii_tab' }
   | { format: 'guitarpro'; version: string }
   | { format: 'unknown' };
 
@@ -47,6 +48,9 @@ const UG_SECTION_RE =
 
 // Inline bracket chord, e.g. [Am7], [F#/A], [Bbmaj7]
 const BRACKET_CHORD_RE = /\[[A-G][#b]?[^\]\n]{0,10}\]/;
+
+// ASCII guitar tab line: string name + pipe + tab content
+const ASCII_TAB_LINE_RE = /^[eEBGDA]\|[\s\-0-9hpbtrx/\\~().|:]*$/;
 
 /**
  * Detect Guitar Pro binary format. GP3/4/5 files begin with a Pascal-style
@@ -143,7 +147,22 @@ export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): Detected
     return { format: 'chordpro' };
   }
 
-  // 6. Chord-over-words heuristic: count chord-only lines vs text lines
+  // 6. ASCII tab: at least 4 consecutive tab lines in the first 2 KB
+  {
+    const headLines = head.split('\n');
+    let consecutive = 0;
+    for (const l of headLines) {
+      const t = l.trim();
+      if (t.length >= 3 && ASCII_TAB_LINE_RE.test(t)) {
+        consecutive++;
+        if (consecutive >= 4) return { format: 'ascii_tab' };
+      } else {
+        consecutive = 0;
+      }
+    }
+  }
+
+  // 7. Chord-over-words heuristic: count chord-only lines vs text lines
   const lines = head.split('\n');
   let chordLines = 0;
   let textLines = 0;
@@ -159,9 +178,14 @@ export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): Detected
     return { format: 'chords-over-words' };
   }
 
-  // 7. Extension fallback for known chord-chart extensions
+  // 8. Extension fallback for known chord-chart extensions
   if (['cho', 'chopro', 'chord', 'crd', 'pro'].includes(ext)) {
     return { format: 'chordpro' };
+  }
+
+  // 9. Extension fallback for raw tab files
+  if (ext === 'tab') {
+    return { format: 'ascii_tab' };
   }
 
   return { format: 'unknown' };
@@ -179,8 +203,13 @@ export function isChordChartFormat(detected: DetectedFormat): boolean {
   return (
     detected.format === 'chordpro' ||
     detected.format === 'ultimateguitar' ||
-    detected.format === 'chords-over-words'
+    detected.format === 'chords-over-words' ||
+    detected.format === 'ascii_tab'
   );
+}
+
+export function isAsciiTabFormat(detected: DetectedFormat): boolean {
+  return detected.format === 'ascii_tab';
 }
 
 export function asSourceFormat(detected: DetectedFormat): SourceFormat | null {
