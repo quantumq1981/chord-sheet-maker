@@ -743,6 +743,7 @@ export default function App() {
   const [gpTracks, setGpTracks] = useState<string[]>([]);
   const [gpChordProText, setGpChordProText] = useState('');
   const [gpChordProWarnings, setGpChordProWarnings] = useState<string[]>([]);
+  const [gpKeyRoot, setGpKeyRoot] = useState<string | null>(null);
   // Stable Uint8Array view — only recreated when gpFileBuffer changes, not on every render.
   // Without this, every App re-render (e.g. from onScoreLoaded state updates) creates a new
   // object, causing AlphaTabRenderer's fileData effect to fire and cancel the ongoing worker render.
@@ -1033,6 +1034,7 @@ export default function App() {
     setGpTracks([]);
     setGpChordProText('');
     setGpChordProWarnings([]);
+    setGpKeyRoot(null);
     // OMR
     resetOmrState();
   }, [resetOmrState]);
@@ -1840,9 +1842,10 @@ export default function App() {
 
   const transposeKeyDisplay = useMemo(() => {
     if (appMode === 'chord-chart') return chartDocument?.key ? transposeChord(chartDocument.key, transposeSemitones, transposeEnharmonic) : null;
+    if (gpFileBuffer && gpKeyRoot) return transposeChord(gpKeyRoot, transposeSemitones, transposeEnharmonic);
     if (!pristineXmlText) return null;
     return transposeKeyDisplayFromXml(pristineXmlText, transposeSemitones, transposeEnharmonic);
-  }, [appMode, chartDocument?.key, pristineXmlText, transposeSemitones, transposeEnharmonic]);
+  }, [appMode, chartDocument?.key, gpFileBuffer, gpKeyRoot, pristineXmlText, transposeSemitones, transposeEnharmonic]);
 
   // ── Guitar Pro: score loaded callback ──
   // Called by AlphaTabRenderer after ScoreLoader parses the GP file.
@@ -1855,6 +1858,14 @@ export default function App() {
     setGpChordProWarnings(warnings);
     const positions = gpScoreNotePositions(score, partIdx);
     setAlphaTabNotePositions(positions);
+    // Extract tonic of the first bar's key signature for the transpose display.
+    // KeySignature is an enum value from -7 (Cb) to +7 (C#).
+    const keySig: number = (score.masterBars?.[0]?.keySignature as number) ?? 0;
+    const GP_KEY_ROOTS: Record<number, string> = {
+      [-7]: 'Cb', [-6]: 'Gb', [-5]: 'Db', [-4]: 'Ab', [-3]: 'Eb', [-2]: 'Bb', [-1]: 'F',
+      0: 'C', 1: 'G', 2: 'D', 3: 'A', 4: 'E', 5: 'B', 6: 'F#', 7: 'C#',
+    };
+    setGpKeyRoot(GP_KEY_ROOTS[keySig] ?? null);
   }, [alphaTabSettings.partIndex]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
