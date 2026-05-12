@@ -309,6 +309,12 @@ export default function AlphaTabRenderer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty — API created once
 
+  // Keep a stable ref to loadData so the re-load effect below doesn't fire
+  // just because display settings (uiSettings → buildSettings → createApi → loadData)
+  // changed — that path is handled by the settings-change effect beneath it.
+  const loadDataRef = useRef(loadData);
+  useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
+
   // Re-load when file data or partIndex changes.
   useEffect(() => {
     if (!fileData) return;
@@ -316,8 +322,11 @@ export default function AlphaTabRenderer({
       pendingDataRef.current = fileData;
       return;
     }
-    loadData(apiRef.current, fileData, uiSettings.partIndex);
-  }, [fileData, uiSettings.partIndex, loadData]);
+    loadDataRef.current(apiRef.current, fileData, uiSettings.partIndex);
+    // loadDataRef intentionally excluded — display-setting changes are handled
+    // by the settings-change effect; this effect is data-only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileData, uiSettings.partIndex]);
 
   // Re-render when layout-affecting settings change (stave profile, layout mode, bars per row, scale).
   // Scale is included here rather than a separate updateSettings() call because updateSettings()
