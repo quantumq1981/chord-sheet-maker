@@ -1367,7 +1367,7 @@ select:disabled {
 
   body.printing-alphatab .alphatab-container svg {
     display: block !important;
-    width: 100% !important;
+    width: auto !important;
     max-width: 100% !important;
     height: auto !important;
     page-break-after: always;
