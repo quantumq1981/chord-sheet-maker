@@ -2949,6 +2949,22 @@ export default function App() {
                     Export PNG
                   </button>
                 </div>
+
+                {pdfBlobUrl && pdfFilename && (
+                  <div className="pdf-ready-box">
+                    <p className="pdf-ready-title">PDF Ready</p>
+                    <div className="pdf-ready-actions">
+                      <a href={pdfBlobUrl} target="_blank" rel="noopener noreferrer" className="open-pdf-link">
+                        Open PDF
+                      </a>
+                      <a href={pdfBlobUrl} download={pdfFilename}>Download PDF</a>
+                      {canSharePdf && (
+                        <button type="button" onClick={() => void sharePdf()}>Share PDF</button>
+                      )}
+                      <button type="button" onClick={clearPdfOutput}>Clear PDF</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="panel-section">
