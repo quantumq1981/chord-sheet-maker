@@ -1357,6 +1357,16 @@ select:disabled {
     overflow: visible !important;
   }
 
+  /* AlphaTab page-mode wraps each page SVG in position:absolute inside a
+     fixed-height overflow:hidden div it generates. Reset those internal divs
+     so the SVGs re-flow into the normal document flow for printing. */
+  body.printing-alphatab .alphatab-container div {
+    position: static !important;
+    overflow: visible !important;
+    height: auto !important;
+    transform: none !important;
+  }
+
   body.printing-alphatab .alphatab-loading,
   body.printing-alphatab .alphatab-error,
   body.printing-alphatab .alphatab-fullscreen-close,
@@ -1366,8 +1376,9 @@ select:disabled {
   }
 
   body.printing-alphatab .alphatab-container svg {
+    position: static !important;
     display: block !important;
-    width: auto !important;
+    width: 100% !important;
     max-width: 100% !important;
     height: auto !important;
     page-break-after: always;
