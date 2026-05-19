@@ -315,19 +315,31 @@ function parseMeasure(
   const repeatEnd = Array.from(measureEl.querySelectorAll('barline repeat'))
     .some((r) => (r.getAttribute('direction') ?? '') === 'backward');
 
-  // Harmony events (chord symbols) keyed by onset division offset
+  // Slash/rhythm notation detection
+  const slashMeasure = isSlashMeasure(measureEl);
+
+  // Harmony events keyed by onset division offset
   const harmonyMap = new Map<number, string>();
+  const harmonyVoicingMap = new Map<number, { rootChromatic: number; intervals: number[] }>();
   let harmonyOffset = 0;
   for (const child of Array.from(measureEl.children)) {
     if (child.tagName === 'harmony') {
       const rootStep = queryText(child, 'root > root-step');
       if (rootStep) {
-        const rootAlter = queryText(child, 'root > root-alter');
+        const rootAlterText = queryText(child, 'root > root-alter');
+        const rootAlter = rootAlterText ? parseFloat(rootAlterText) : 0;
         const kind = queryText(child, 'kind');
         const bass = queryText(child, 'bass > bass-step');
-        const bassAlter = queryText(child, 'bass > bass-alter');
-        const chordText = buildChordText(rootStep, rootAlter ? parseFloat(rootAlter) : 0, kind, bass, bassAlter ? parseFloat(bassAlter) : 0);
-        harmonyMap.set(harmonyOffset, chordText);
+        const bassAlterText = queryText(child, 'bass > bass-alter');
+        const bassAlter = bassAlterText ? parseFloat(bassAlterText) : 0;
+        harmonyMap.set(harmonyOffset, buildChordText(rootStep, rootAlter, kind, bass, bassAlter));
+        const intervals = KIND_INTERVALS[kind];
+        if (intervals) {
+          harmonyVoicingMap.set(harmonyOffset, {
+            rootChromatic: rootToChromatic(rootStep, rootAlter),
+            intervals,
+          });
+        }
       }
     }
     if (child.tagName === 'note') {
@@ -341,18 +353,44 @@ function parseMeasure(
 
   // Notes
   const rawNotes = collectNoteElements(measureEl);
-  const groups = groupIntoBeats(rawNotes);  // group simultaneous (chord) notes
+  const groups = groupIntoBeats(rawNotes);
+
+  // All-same-pitch heuristic: when every non-rest note shares a MIDI pitch (jazz B4 convention),
+  // treat the measure as rhythm slashes so we can substitute chord voicings.
+  let effectiveSlash = slashMeasure;
+  if (!effectiveSlash && groups.length > 1) {
+    const nonRestMidis: number[] = [];
+    for (const group of groups) {
+      if (group.every((n) => n.querySelector(':scope > rest') !== null)) continue;
+      for (const n of group) {
+        const p = n.querySelector(':scope > pitch');
+        if (!p) continue;
+        const step = queryText(p, 'step');
+        const alter = parseFloat(queryText(p, 'alter') || '0');
+        const octave = parseInt(queryText(p, 'octave'), 10);
+        if (step && Number.isFinite(octave)) nonRestMidis.push(pitchToMidi(step, alter, octave));
+      }
+    }
+    if (nonRestMidis.length > 1 && nonRestMidis.every((m) => m === nonRestMidis[0])) {
+      effectiveSlash = true;
+    }
+  }
 
   const vexNotes: VexTabNoteData[] = [];
   const chordSymbols: Array<{ noteIndex: number; text: string }> = [];
 
-  let noteOffset = 0;  // tracks onset in divisions
-  let harmonyAssignedOffsets = new Set<number>();
+  let noteOffset = 0;
+  const harmonyAssignedOffsets = new Set<number>();
+  let currentVoicingData: { rootChromatic: number; intervals: number[] } | null = null;
 
   for (const group of groups) {
     const noteIdx = vexNotes.length;
 
-    // Assign chord symbol if harmony falls on or near this beat
+    // Sticky: update current voicing whenever a harmony event fires at this offset
+    const voicingAtOffset = harmonyVoicingMap.get(noteOffset);
+    if (voicingAtOffset) currentVoicingData = voicingAtOffset;
+
+    // Assign chord symbol
     if (!harmonyAssignedOffsets.has(noteOffset) && harmonyMap.size > 0) {
       const sym = harmonyMap.get(noteOffset);
       if (sym) {
@@ -361,10 +399,8 @@ function parseMeasure(
       }
     }
 
-    // Is this group a rest?
     const isRest = group.every((n) => n.querySelector(':scope > rest') !== null);
 
-    // Duration from first note
     const firstNote = group[0];
     const typeText = queryText(firstNote, 'type');
     const isDotted = firstNote.querySelector(':scope > dot') !== null;
@@ -374,45 +410,52 @@ function parseMeasure(
     let positions: VexTabPosition[] = [];
 
     if (!isRest) {
-      // Map pitches to fret/string positions
-      const pitchEls = group.map((n) => n.querySelector(':scope > pitch'));
-      const pitchMidis: number[] = [];
-      for (const p of pitchEls) {
-        if (!p) continue;
-        const step = queryText(p, 'step');
-        const alter = parseFloat(queryText(p, 'alter') || '0');
-        const octave = parseInt(queryText(p, 'octave'), 10);
-        if (!step || !Number.isFinite(octave)) continue;
-        pitchMidis.push(pitchToMidi(step, alter, octave));
+      const isSlash = effectiveSlash || group.some((n) => isSlashNote(n));
+
+      // For slash/rhythm notes substitute a proper guitar chord voicing when available
+      if (isSlash && currentVoicingData) {
+        positions = computeChordVoicing(
+          currentVoicingData.rootChromatic,
+          currentVoicingData.intervals,
+          openMidis,
+        );
       }
 
-      // Sort highest pitch first so high notes map to low string numbers (standard tab layout)
-      pitchMidis.sort((a, b) => b - a);
-
-      const usedStrings = new Set<number>();
-      for (const midi of pitchMidis) {
-        const pos = midiToPosition(midi, openMidis, usedStrings);
-        if (pos) {
-          positions.push(pos);
-          usedStrings.add(pos.str);
-        } else {
-          // Out of range: show as muted on the nearest string
-          const nearestStr = findNearestString(midi, openMidis, usedStrings);
-          positions.push({ str: nearestStr, fret: 'x' });
-          usedStrings.add(nearestStr);
-          outOfRange++;
+      // Fall back to literal pitch mapping (ordinary notes, or voicing failed)
+      if (positions.length === 0) {
+        const pitchEls = group.map((n) => n.querySelector(':scope > pitch'));
+        const pitchMidis: number[] = [];
+        for (const p of pitchEls) {
+          if (!p) continue;
+          const step = queryText(p, 'step');
+          const alter = parseFloat(queryText(p, 'alter') || '0');
+          const octave = parseInt(queryText(p, 'octave'), 10);
+          if (!step || !Number.isFinite(octave)) continue;
+          pitchMidis.push(pitchToMidi(step, alter, octave));
+        }
+        pitchMidis.sort((a, b) => b - a);
+        const usedStrings = new Set<number>();
+        for (const midi of pitchMidis) {
+          const pos = midiToPosition(midi, openMidis, usedStrings);
+          if (pos) {
+            positions.push(pos);
+            usedStrings.add(pos.str);
+          } else {
+            const nearestStr = findNearestString(midi, openMidis, usedStrings);
+            positions.push({ str: nearestStr, fret: 'x' });
+            usedStrings.add(nearestStr);
+            outOfRange++;
+          }
         }
       }
     }
 
     if (positions.length === 0) {
-      // Rest or unparseable note — use a ghost placeholder via empty positions
       positions = [{ str: 1, fret: 'x' }];
     }
 
     vexNotes.push({ positions, duration: vfDuration, isRest });
 
-    // Advance offset by first note's duration
     const dur = parseInt(queryText(firstNote, 'duration'), 10) || 0;
     noteOffset += dur;
   }
@@ -465,7 +508,148 @@ function findNearestString(midi: number, openMidis: number[], usedStrings: Set<n
   return best;
 }
 
+// ─── Chord voicing helpers ────────────────────────────────────────────────────
+
+function rootToChromatic(step: string, alter: number): number {
+  return ((STEP_TO_SEMITONE[step.toUpperCase()] ?? 0) + Math.round(alter) + 12) % 12;
+}
+
+function pickGuitarIntervals(intervals: number[]): number[] {
+  let result = [...intervals];
+  // For extended chords drop the 5th to keep voicings compact
+  if (result.length > 4) result = result.filter((v) => v !== 7);
+  // Cap at 4 tones: root + top 3 intervals
+  if (result.length > 4) result = [result[0], ...result.slice(-3)];
+  return result;
+}
+
+function tryVoicingFromRoot(
+  rootChromatic: number,
+  intervals: number[],
+  openMidis: number[],
+  rootStrIdx: number,
+): VexTabPosition[] | null {
+  if (rootStrIdx >= openMidis.length) return null;
+  const rootOpenMidi = openMidis[rootStrIdx];
+
+  // Find root fret on rootStrIdx, preferring frets 2–14 (moveable shape)
+  let rootFret = -1;
+  for (let fret = 0; fret <= MAX_FRET; fret++) {
+    if (((rootOpenMidi + fret) % 12) === rootChromatic) {
+      if (fret >= 2) { rootFret = fret; break; }
+      if (rootFret === -1) rootFret = fret;
+    }
+  }
+  if (rootFret < 0) return null;
+
+  const result: VexTabPosition[] = [{ str: rootStrIdx + 1, fret: rootFret }];
+  const usedStrings = new Set<number>([rootStrIdx + 1]);
+
+  for (const interval of intervals.slice(1)) {
+    const targetPc = (rootChromatic + interval) % 12;
+    let placed = false;
+
+    // First pass: require fret within 5 of root fret
+    for (let si = rootStrIdx - 1; si >= 0; si--) {
+      const strNum = si + 1;
+      if (usedStrings.has(strNum)) continue;
+      const openM = openMidis[si];
+      let bestFret = -1;
+      let bestDist = Infinity;
+      for (let fret = 0; fret <= MAX_FRET; fret++) {
+        if (((openM + fret) % 12) === targetPc) {
+          const dist = Math.abs(fret - rootFret);
+          if (dist <= 5 && dist < bestDist) { bestDist = dist; bestFret = fret; }
+        }
+      }
+      if (bestFret >= 0) {
+        result.push({ str: strNum, fret: bestFret });
+        usedStrings.add(strNum);
+        placed = true;
+        break;
+      }
+    }
+
+    // Second pass: any octave, no fret-stretch constraint
+    if (!placed) {
+      for (let si = rootStrIdx - 1; si >= 0; si--) {
+        const strNum = si + 1;
+        if (usedStrings.has(strNum)) continue;
+        const openM = openMidis[si];
+        for (let fret = 0; fret <= MAX_FRET; fret++) {
+          if (((openM + fret) % 12) === targetPc) {
+            result.push({ str: strNum, fret });
+            usedStrings.add(strNum);
+            placed = true;
+            break;
+          }
+        }
+        if (placed) break;
+      }
+    }
+  }
+
+  if (result.length < Math.min(2, intervals.length)) return null;
+  result.sort((a, b) => a.str - b.str);
+  return result;
+}
+
+function computeChordVoicing(
+  rootChromatic: number,
+  intervals: number[],
+  openMidis: number[],
+): VexTabPosition[] {
+  const picked = pickGuitarIntervals(intervals);
+  for (const rootStrIdx of [5, 4, 3]) {
+    if (rootStrIdx >= openMidis.length) continue;
+    const result = tryVoicingFromRoot(rootChromatic, picked, openMidis, rootStrIdx);
+    if (result && result.length >= Math.min(2, picked.length)) return result;
+  }
+  return [];
+}
+
+function isSlashMeasure(measureEl: Element): boolean {
+  if (measureEl.querySelector('measure-style > slash[type="start"]')) return true;
+  for (const note of Array.from(measureEl.querySelectorAll(':scope > note'))) {
+    if (textContent(note.querySelector('notehead')) === 'slash') return true;
+  }
+  return false;
+}
+
+function isSlashNote(noteEl: Element): boolean {
+  return textContent(noteEl.querySelector('notehead')) === 'slash';
+}
+
 // ─── Chord symbol builder ─────────────────────────────────────────────────────
+
+// MusicXML <kind> → interval array (semitones from root, mod-12 for pitch class)
+const KIND_INTERVALS: Record<string, number[]> = {
+  major:               [0, 4, 7],
+  minor:               [0, 3, 7],
+  augmented:           [0, 4, 8],
+  diminished:          [0, 3, 6],
+  'suspended-second':  [0, 2, 7],
+  'suspended-fourth':  [0, 5, 7],
+  'major-sixth':       [0, 4, 7, 9],
+  'minor-sixth':       [0, 3, 7, 9],
+  dominant:            [0, 4, 7, 10],
+  'major-seventh':     [0, 4, 7, 11],
+  'minor-seventh':     [0, 3, 7, 10],
+  'diminished-seventh':[0, 3, 6, 9],
+  'half-diminished':   [0, 3, 6, 10],
+  'augmented-seventh': [0, 4, 8, 10],
+  'major-minor':       [0, 3, 7, 11],
+  'dominant-ninth':    [0, 4, 10, 14],
+  'major-ninth':       [0, 4, 11, 14],
+  'minor-ninth':       [0, 3, 10, 14],
+  'dominant-11th':     [0, 4, 10, 17],
+  'major-11th':        [0, 4, 11, 17],
+  'minor-11th':        [0, 3, 10, 17],
+  'dominant-13th':     [0, 4, 10, 21],
+  'major-13th':        [0, 4, 11, 21],
+  'minor-13th':        [0, 3, 10, 21],
+  power:               [0, 7],
+};
 
 const KIND_MAP: Record<string, string> = {
   major: '', minor: 'm', diminished: 'dim', augmented: 'aug',
