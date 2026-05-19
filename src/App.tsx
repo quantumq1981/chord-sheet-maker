@@ -1808,7 +1808,6 @@ export default function App() {
           : (isLandscape ? '297mm 210mm'  : '210mm 297mm');
         const pgW  = isLetter ? (isLandscape ? '11in'  : '8.5in') : (isLandscape ? '297mm' : '210mm');
         const pgH  = isLetter ? (isLandscape ? '8.5in' : '11in')  : (isLandscape ? '210mm' : '297mm');
-        const orientation = isLandscape ? 'landscape' : 'portrait';
 
         const imgs = pages
           .map((c) => `<div class="pg"><img src="${c.toDataURL('image/jpeg', 0.92)}" alt=""></div>`)
