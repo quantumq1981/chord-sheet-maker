@@ -306,43 +306,80 @@ async function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Bl
 }
 
 // Stitch AlphaTab SVG strip-chunks into page-sized canvases suitable for PDF or print.
-// AlphaTab page-layout renders many narrow system-strip SVGs positioned absolutely;
-// this stitches them vertically then slices into portrait-page-height chunks.
+// Auto-detects orientation: if the stitched canvas is much wider than tall (horizontal
+// scroll layout), uses landscape slicing; otherwise uses portrait (vertical) slicing.
+interface PageCanvasResult {
+  pages: HTMLCanvasElement[];
+  isLandscape: boolean;
+}
 async function alphaTabSvgsToPageCanvases(
   svgs: SVGSVGElement[],
   isLetter: boolean,
   renderScale = 2,
-): Promise<HTMLCanvasElement[]> {
-  const pageW = isLetter ? 8.5 : 8.27;   // inches
-  const pageH = isLetter ? 11  : 11.69;
+): Promise<PageCanvasResult> {
   const marginIn = 0.5;
   const dpi = 96;
+
+  const stitched = await stitchCanvases(svgs, renderScale);
+  if (stitched.width === 0 || stitched.height === 0) return { pages: [], isLandscape: false };
+
+  // If canvas is more than 2× wider than tall, treat as horizontal/landscape layout
+  const isLandscape = stitched.width > stitched.height * 2;
+
+  // Page dimensions in inches (landscape swaps the long/short edges)
+  const pageW = isLandscape
+    ? (isLetter ? 11 : 11.69)
+    : (isLetter ? 8.5 : 8.27);
+  const pageH = isLandscape
+    ? (isLetter ? 8.5 : 8.27)
+    : (isLetter ? 11 : 11.69);
+
   const availW = (pageW - marginIn * 2) * dpi;
   const availH = (pageH - marginIn * 2) * dpi;
 
-  const stitched = await stitchCanvases(svgs, renderScale);
-  if (stitched.width === 0 || stitched.height === 0) return [];
-
-  // Canvas pixels that fit in one page height (maintaining aspect ratio to page width)
-  const pageHPx = (availH / availW) * stitched.width;
-  const numPages = Math.ceil(stitched.height / pageHPx);
-
   const pages: HTMLCanvasElement[] = [];
-  for (let i = 0; i < numPages; i++) {
-    const srcY = Math.round(i * pageHPx);
-    const srcH = Math.min(Math.ceil(pageHPx), stitched.height - srcY);
-    if (srcH <= 0) break;
-    const chunk = document.createElement('canvas');
-    chunk.width = stitched.width;
-    chunk.height = srcH;
-    const ctx = chunk.getContext('2d');
-    if (!ctx) continue;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, chunk.width, chunk.height);
-    ctx.drawImage(stitched, 0, srcY, stitched.width, srcH, 0, 0, stitched.width, srcH);
-    pages.push(chunk);
+
+  if (isLandscape) {
+    // Slice horizontally: each column-chunk is one landscape page
+    // Scale so the canvas height fills availH; each page covers availW worth of canvas width
+    const pageWPx = Math.round((availW / availH) * stitched.height);
+    if (pageWPx <= 0) return { pages: [], isLandscape: true };
+    const numPages = Math.ceil(stitched.width / pageWPx);
+    for (let i = 0; i < numPages; i++) {
+      const srcX = Math.round(i * pageWPx);
+      const srcW = Math.min(pageWPx, stitched.width - srcX);
+      if (srcW <= 0) break;
+      const chunk = document.createElement('canvas');
+      chunk.width = srcW;
+      chunk.height = stitched.height;
+      const ctx = chunk.getContext('2d');
+      if (!ctx) continue;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, chunk.width, chunk.height);
+      ctx.drawImage(stitched, srcX, 0, srcW, stitched.height, 0, 0, srcW, stitched.height);
+      pages.push(chunk);
+    }
+  } else {
+    // Slice vertically: each row-chunk is one portrait page
+    const pageHPx = (availH / availW) * stitched.width;
+    const numPages = Math.ceil(stitched.height / pageHPx);
+    for (let i = 0; i < numPages; i++) {
+      const srcY = Math.round(i * pageHPx);
+      const srcH = Math.min(Math.ceil(pageHPx), stitched.height - srcY);
+      if (srcH <= 0) break;
+      const chunk = document.createElement('canvas');
+      chunk.width = stitched.width;
+      chunk.height = srcH;
+      const ctx = chunk.getContext('2d');
+      if (!ctx) continue;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, chunk.width, chunk.height);
+      ctx.drawImage(stitched, 0, srcY, stitched.width, srcH, 0, 0, stitched.width, srcH);
+      pages.push(chunk);
+    }
   }
-  return pages;
+
+  return { pages, isLandscape };
 }
 
 function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics: Diagnostics } {
@@ -1598,17 +1635,21 @@ export default function App() {
     const margin = isLetter ? 0.5 : 12; // in or mm
     try {
       // AlphaTab renders many narrow system-strip SVGs, not one-per-page. Stitch them
-      // all into one tall canvas then slice into portrait-page-height chunks.
-      const pages = await alphaTabSvgsToPageCanvases(svgs, isLetter, 1.5);
+      // all then slice into page-sized chunks (portrait or landscape auto-detected).
+      const { pages, isLandscape } = await alphaTabSvgsToPageCanvases(svgs, isLetter, 1.5);
       if (pages.length === 0) { showExportError('Could not compute page layout for PDF.'); return; }
 
-      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
+      const orientation = isLandscape ? 'landscape' : 'portrait';
+      const pageFormat: [number, number] = isLandscape
+        ? (isLetter ? [11, 8.5] : [297, 210])
+        : format;
+      const pdf = new jsPDF({ orientation, unit, format: pageFormat });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const availableWidth = pageWidth - margin * 2;
       for (let i = 0; i < pages.length; i++) {
         const canvas = pages[i];
         const jpegData = canvas.toDataURL('image/jpeg', 0.92);
-        if (i > 0) pdf.addPage(format, 'portrait');
+        if (i > 0) pdf.addPage(pageFormat, orientation);
         const imgH = canvas.height * availableWidth / canvas.width;
         pdf.addImage(jpegData, 'JPEG', margin, margin, availableWidth, imgH, undefined, 'FAST');
       }
@@ -1750,32 +1791,51 @@ export default function App() {
     );
 
     const isLetter = pdfPageSize === 'letter';
-    const pageSize = isLetter ? 'letter' : 'A4';
     const marginIn = 0.5;
 
     // Async: stitch system strips into page-sized images, then write to the opened window.
     alphaTabSvgsToPageCanvases(svgs, isLetter, 2)
-      .then((pages) => {
+      .then(({ pages, isLandscape }) => {
         if (pages.length === 0) {
           showExportError('Print failed: could not compute page layout.');
           try { printWin.close(); } catch { /* ignore */ }
           return;
         }
+
+        // Use explicit physical dimensions so iOS AirPrint scales correctly at 100%.
+        const cssSize = isLetter
+          ? (isLandscape ? '11in 8.5in'   : '8.5in 11in')
+          : (isLandscape ? '297mm 210mm'  : '210mm 297mm');
+        const pgW  = isLetter ? (isLandscape ? '11in'  : '8.5in') : (isLandscape ? '297mm' : '210mm');
+        const pgH  = isLetter ? (isLandscape ? '8.5in' : '11in')  : (isLandscape ? '210mm' : '297mm');
+        const orientation = isLandscape ? 'landscape' : 'portrait';
+
         const imgs = pages
-          .map((c) => `<img src="${c.toDataURL('image/jpeg', 0.92)}" alt="">`)
+          .map((c) => `<div class="pg"><img src="${c.toDataURL('image/jpeg', 0.92)}" alt=""></div>`)
           .join('');
-        // <script> triggers print automatically once all images are decoded.
-        // Inline script avoids user-gesture requirement on popup print().
+        // Wrap each image in a .pg div with exact physical page dimensions so iOS
+        // knows the intended scale without the user having to adjust it manually.
+        // The inline <script> triggers print once all images have decoded.
         const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Print Score</title>
 <style>
-@page{size:${pageSize} portrait;margin:${marginIn}in}
+@page{size:${cssSize};margin:0}
 *{margin:0;padding:0;box-sizing:border-box}
-img{display:block;width:100%;break-after:page;page-break-after:always}
-img:last-child{break-after:auto;page-break-after:avoid}
+html,body{background:#fff}
+.pg{
+  width:${pgW};height:${pgH};
+  display:flex;align-items:center;justify-content:center;
+  padding:${marginIn}in;
+  page-break-after:always;break-after:page;
+  overflow:hidden
+}
+.pg:last-child{page-break-after:avoid;break-after:auto}
+img{width:100%;height:100%;object-fit:contain;display:block}
+@media print{.pg{page-break-after:always;break-after:page}.pg:last-child{page-break-after:avoid;break-after:auto}}
 </style>
 </head>
 <body>
