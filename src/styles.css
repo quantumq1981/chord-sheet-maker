@@ -1285,18 +1285,6 @@ select:disabled {
     margin: 15mm 10mm 10mm 10mm;
   }
 
-  @page alphatab-letter {
-    size: letter portrait;
-    margin: 15mm 10mm 10mm 10mm;
-  }
-
-  @page alphatab-a4 {
-    size: A4 portrait;
-    margin: 15mm 10mm 10mm 10mm;
-  }
-
-  body.print-page-letter { page: alphatab-letter; }
-  body.print-page-a4     { page: alphatab-a4; }
   body { margin: 0; }
 
   .top-bar,
@@ -1337,55 +1325,6 @@ select:disabled {
   }
 
   .score-container svg:last-child {
-    page-break-after: avoid;
-    break-after: avoid;
-  }
-
-  body.printing-alphatab .score-viewport,
-  body.printing-alphatab .alphatab-viewport {
-    height: auto !important;
-    max-height: none !important;
-    border: none !important;
-    padding: 0 !important;
-    overflow: visible !important;
-  }
-
-  body.printing-alphatab .alphatab-wrapper,
-  body.printing-alphatab .alphatab-container {
-    width: 100% !important;
-    min-height: 0 !important;
-    overflow: visible !important;
-  }
-
-  /* AlphaTab page-mode wraps each page SVG in position:absolute inside a
-     fixed-height overflow:hidden div it generates. Reset those internal divs
-     so the SVGs re-flow into the normal document flow for printing. */
-  body.printing-alphatab .alphatab-container div {
-    position: static !important;
-    overflow: visible !important;
-    height: auto !important;
-    transform: none !important;
-  }
-
-  body.printing-alphatab .alphatab-loading,
-  body.printing-alphatab .alphatab-error,
-  body.printing-alphatab .alphatab-fullscreen-close,
-  body.printing-alphatab .fretboard-panel,
-  body.printing-alphatab textarea {
-    display: none !important;
-  }
-
-  body.printing-alphatab .alphatab-container svg {
-    position: static !important;
-    display: block !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    height: auto !important;
-    page-break-after: always;
-    break-after: page;
-  }
-
-  body.printing-alphatab .alphatab-container svg:last-child {
     page-break-after: avoid;
     break-after: avoid;
   }

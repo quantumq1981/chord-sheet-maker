@@ -137,7 +137,6 @@ const OMR_POLL_SLOWDOWN_AFTER_MS = 30000;
 
 const IOS_USER_AGENT = /iPad|iPhone|iPod/;
 const PRINT_ZOOM = 1.0;
-const ALPHATAB_PRINT_SCALE = 0.95;
 
 
 function applyPrintProfile(osmd: OpenSheetMusicDisplay, pageSize: PrintPageSize): void {
@@ -304,6 +303,46 @@ async function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Bl
       resolve(blob);
     }, type);
   });
+}
+
+// Stitch AlphaTab SVG strip-chunks into page-sized canvases suitable for PDF or print.
+// AlphaTab page-layout renders many narrow system-strip SVGs positioned absolutely;
+// this stitches them vertically then slices into portrait-page-height chunks.
+async function alphaTabSvgsToPageCanvases(
+  svgs: SVGSVGElement[],
+  isLetter: boolean,
+  renderScale = 2,
+): Promise<HTMLCanvasElement[]> {
+  const pageW = isLetter ? 8.5 : 8.27;   // inches
+  const pageH = isLetter ? 11  : 11.69;
+  const marginIn = 0.5;
+  const dpi = 96;
+  const availW = (pageW - marginIn * 2) * dpi;
+  const availH = (pageH - marginIn * 2) * dpi;
+
+  const stitched = await stitchCanvases(svgs, renderScale);
+  if (stitched.width === 0 || stitched.height === 0) return [];
+
+  // Canvas pixels that fit in one page height (maintaining aspect ratio to page width)
+  const pageHPx = (availH / availW) * stitched.width;
+  const numPages = Math.ceil(stitched.height / pageHPx);
+
+  const pages: HTMLCanvasElement[] = [];
+  for (let i = 0; i < numPages; i++) {
+    const srcY = Math.round(i * pageHPx);
+    const srcH = Math.min(Math.ceil(pageHPx), stitched.height - srcY);
+    if (srcH <= 0) break;
+    const chunk = document.createElement('canvas');
+    chunk.width = stitched.width;
+    chunk.height = srcH;
+    const ctx = chunk.getContext('2d');
+    if (!ctx) continue;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, chunk.width, chunk.height);
+    ctx.drawImage(stitched, 0, srcY, stitched.width, srcH, 0, 0, stitched.width, srcH);
+    pages.push(chunk);
+  }
+  return pages;
 }
 
 function parseXmlWithDiagnostics(xmlText: string): { doc: Document; diagnostics: Diagnostics } {
@@ -750,10 +789,6 @@ export default function App() {
   const [alphaTabRenderError, setAlphaTabRenderError] = useState('');
   const [alphaTabNotePositions, setAlphaTabNotePositions] = useState<NotePositionMap[]>([]);
   const [alphaTabFullscreen, setAlphaTabFullscreen] = useState(false);
-  const [alphaTabPrintPending, setAlphaTabPrintPending] = useState(false);
-  const [alphaTabRenderTick, setAlphaTabRenderTick] = useState(0);
-  const alphaTabPrintRestoreRef = useRef<AlphaTabUiSettings | null>(null);
-  const alphaTabPrintStartTickRef = useRef(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // ── Guitar Pro file state ──
@@ -1040,9 +1075,6 @@ export default function App() {
     // AlphaTab
     setAlphaTabRenderError('');
     setAlphaTabNotePositions([]);
-    setAlphaTabPrintPending(false);
-    alphaTabPrintRestoreRef.current = null;
-    document.body.classList.remove('printing-alphatab', 'print-page-letter', 'print-page-a4');
     setAlphaTabSettings({
       display: { staveProfile: DEFAULT_STAVE_PROFILE, layoutMode: 'page', barsPerRow: -1, scale: DEFAULT_SCALE },
       enablePlayer: false,
@@ -1563,33 +1595,28 @@ export default function App() {
     const isLetter = pdfPageSize === 'letter';
     const unit = isLetter ? 'in' : 'mm';
     const format: [number, number] = isLetter ? [8.5, 11] : [210, 297];
-    const margin = isLetter ? 0.5 : 12;
+    const margin = isLetter ? 0.5 : 12; // in or mm
     try {
+      // AlphaTab renders many narrow system-strip SVGs, not one-per-page. Stitch them
+      // all into one tall canvas then slice into portrait-page-height chunks.
+      const pages = await alphaTabSvgsToPageCanvases(svgs, isLetter, 1.5);
+      if (pages.length === 0) { showExportError('Could not compute page layout for PDF.'); return; }
+
       const pdf = new jsPDF({ orientation: 'portrait', unit, format });
-      for (let index = 0; index < svgs.length; index++) {
-        const canvas = await svgToCanvas(svgs[index], 1.5);
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const availableWidth = pageWidth - margin * 2;
+      for (let i = 0; i < pages.length; i++) {
+        const canvas = pages[i];
         const jpegData = canvas.toDataURL('image/jpeg', 0.92);
-        if (index > 0) pdf.addPage(format, 'portrait');
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        const availableWidth = pageWidth - margin * 2;
-        const availableHeight = pageHeight - margin * 2;
-        const imgAspect = canvas.width / canvas.height;
-        let width = availableWidth;
-        let height = width / imgAspect;
-        if (height > availableHeight) {
-          height = availableHeight;
-          width = height * imgAspect;
-        }
-        const x = (pageWidth - width) / 2;
-        const y = (pageHeight - height) / 2;
-        pdf.addImage(jpegData, 'JPEG', x, y, width, height, undefined, 'FAST');
+        if (i > 0) pdf.addPage(format, 'portrait');
+        const imgH = canvas.height * availableWidth / canvas.width;
+        pdf.addImage(jpegData, 'JPEG', margin, margin, availableWidth, imgH, undefined, 'FAST');
       }
       const blob = pdf.output('blob');
       const url = URL.createObjectURL(blob);
       setPdfBlobUrl(url);
       setPdfFilename(`${baseName}.alphatab.pdf`);
-      showExportSuccess('AlphaTab PDF ready. Tap Open PDF.');
+      showExportSuccess(`AlphaTab PDF ready (${pages.length} page(s)). Tap Open PDF.`);
     } catch (error) {
       showExportError(`AlphaTab PDF export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1704,86 +1731,71 @@ export default function App() {
   const printAlphaTab = useCallback(() => {
     const svgs = getAlphaTabSvgEls();
     if (appMode !== 'alphatab' || svgs.length === 0) {
-      showExportError('No Guitar Pro / AlphaTab score found. Wait for the score to finish rendering, then try Print.');
+      showExportError('No AlphaTab score found. Wait for rendering to finish, then try Print.');
       return;
     }
-
-    const printSettings: AlphaTabUiSettings = {
-      ...alphaTabSettings,
-      printProfile: true,
-      display: {
-        ...alphaTabSettings.display,
-        staveProfile: 'scoreTab',
-        layoutMode: 'page',
-        barsPerRow: -1,
-        scale: ALPHATAB_PRINT_SCALE,
-      },
-    };
-
-    alphaTabPrintRestoreRef.current = alphaTabSettings;
-    alphaTabPrintStartTickRef.current = alphaTabRenderTick;
     setAlphaTabFullscreen(false);
-    setAlphaTabPrintPending(true);
-    document.body.classList.add('printing-alphatab', `print-page-${pdfPageSize}`);
-    document.body.classList.remove(pdfPageSize === 'letter' ? 'print-page-a4' : 'print-page-letter');
 
-    const alreadyPrintReady =
-      alphaTabSettings.printProfile === true &&
-      alphaTabSettings.display.staveProfile === printSettings.display.staveProfile &&
-      alphaTabSettings.display.layoutMode === printSettings.display.layoutMode &&
-      alphaTabSettings.display.barsPerRow === printSettings.display.barsPerRow &&
-      alphaTabSettings.display.scale === printSettings.display.scale;
-
-    if (alreadyPrintReady) {
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-        const restoreAfterPrint = () => {
-          window.removeEventListener('afterprint', restoreAfterPrint);
-          document.body.classList.remove('printing-alphatab', 'print-page-letter', 'print-page-a4');
-          setAlphaTabPrintPending(false);
-          const restore = alphaTabPrintRestoreRef.current;
-          alphaTabPrintRestoreRef.current = null;
-          if (restore) setAlphaTabSettings(restore);
-        };
-        window.addEventListener('afterprint', restoreAfterPrint, { once: true });
-        window.print();
-        window.setTimeout(restoreAfterPrint, 5000);
-      }));
+    // Open the print window NOW, synchronously within the user-gesture context.
+    // Calling window.open() after an await is blocked on mobile Safari.
+    const printWin = window.open('', '_blank');
+    if (!printWin) {
+      showExportError('Pop-up blocked. Allow pop-ups to print, or use Export PDF instead.');
       return;
     }
+    printWin.document.write(
+      '<html><head><title>Print Score</title></head>' +
+      '<body style="background:#fff;padding:2rem;text-align:center;font-family:sans-serif;">' +
+      '<p>Preparing print layout…</p></body></html>',
+    );
 
-    setAlphaTabSettings(printSettings);
-    showExportSuccess('Preparing print layout: notation + tab, portrait page, 10–15mm margins.');
-  }, [alphaTabRenderTick, alphaTabSettings, appMode, getAlphaTabSvgEls, pdfPageSize, showExportError, showExportSuccess]);
+    const isLetter = pdfPageSize === 'letter';
+    const pageSize = isLetter ? 'letter' : 'A4';
+    const marginIn = 0.5;
 
-  useEffect(() => {
-    if (!alphaTabPrintPending) return;
-    if (alphaTabRenderTick <= alphaTabPrintStartTickRef.current) return;
-    if (alphaTabSettings.printProfile !== true) return;
-    if (alphaTabSettings.display.staveProfile !== 'scoreTab') return;
-    if (alphaTabSettings.display.layoutMode !== 'page') return;
-    if (alphaTabSettings.display.barsPerRow !== -1) return;
-    if (alphaTabSettings.display.scale !== ALPHATAB_PRINT_SCALE) return;
-
-    let restored = false;
-    const restoreAfterPrint = () => {
-      if (restored) return;
-      restored = true;
-      window.removeEventListener('afterprint', restoreAfterPrint);
-      document.body.classList.remove('printing-alphatab', 'print-page-letter', 'print-page-a4');
-      setAlphaTabPrintPending(false);
-      const restore = alphaTabPrintRestoreRef.current;
-      alphaTabPrintRestoreRef.current = null;
-      if (restore) setAlphaTabSettings(restore);
-    };
-
-    const timer = window.setTimeout(() => {
-      window.addEventListener('afterprint', restoreAfterPrint, { once: true });
-      window.print();
-      window.setTimeout(restoreAfterPrint, 5000);
-    }, 250);
-
-    return () => window.clearTimeout(timer);
-  }, [alphaTabPrintPending, alphaTabRenderTick, alphaTabSettings]);
+    // Async: stitch system strips into page-sized images, then write to the opened window.
+    alphaTabSvgsToPageCanvases(svgs, isLetter, 2)
+      .then((pages) => {
+        if (pages.length === 0) {
+          showExportError('Print failed: could not compute page layout.');
+          try { printWin.close(); } catch { /* ignore */ }
+          return;
+        }
+        const imgs = pages
+          .map((c) => `<img src="${c.toDataURL('image/jpeg', 0.92)}" alt="">`)
+          .join('');
+        // <script> triggers print automatically once all images are decoded.
+        // Inline script avoids user-gesture requirement on popup print().
+        const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Print Score</title>
+<style>
+@page{size:${pageSize} portrait;margin:${marginIn}in}
+*{margin:0;padding:0;box-sizing:border-box}
+img{display:block;width:100%;break-after:page;page-break-after:always}
+img:last-child{break-after:auto;page-break-after:avoid}
+</style>
+</head>
+<body>
+${imgs}
+<script>(function(){
+function go(){window.focus();window.print();}
+if(document.readyState==='complete'){go();}
+else{window.addEventListener('load',go,{once:true});}
+})();<\/script>
+</body>
+</html>`;
+        printWin.document.open();
+        printWin.document.write(html);
+        printWin.document.close();
+      })
+      .catch((err) => {
+        showExportError(`Print failed: ${err instanceof Error ? err.message : String(err)}`);
+        try { printWin.close(); } catch { /* ignore */ }
+      });
+  }, [appMode, getAlphaTabSvgEls, pdfPageSize, showExportError]);
 
   // ── MusicXML → ChordPro ──
   const generateChordPro = useCallback(async () => {
@@ -2253,7 +2265,6 @@ export default function App() {
                 fileBytes={gpFileBytes}
                 uiSettings={alphaTabSettings}
                 onScoreLoaded={gpFileBuffer ? handleGpScoreLoaded : undefined}
-                onRenderFinished={() => setAlphaTabRenderTick((tick) => tick + 1)}
                 onError={setAlphaTabRenderError}
               />
             )}
@@ -2936,8 +2947,8 @@ export default function App() {
                 </select>
                 <p className="export-hint">Portrait layout, 15mm top / 10mm side margins — optimised for iPhone/iPad Save to PDF.</p>
                 <div className="export-actions">
-                  <button type="button" className="btn-primary" onClick={printAlphaTab} disabled={!canExportAlphaTab || alphaTabPrintPending}>
-                    {alphaTabPrintPending ? 'Preparing…' : 'Print / Save PDF'}
+                  <button type="button" className="btn-primary" onClick={printAlphaTab} disabled={!canExportAlphaTab}>
+                    Print
                   </button>
                   <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
                     Generate PDF
