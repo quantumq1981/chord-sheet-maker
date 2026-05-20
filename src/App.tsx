@@ -22,8 +22,10 @@ import {
   isChordChartFormat,
   isGuitarProFormat,
   isPdfFormat,
+  isPowerTabFormat,
   asSourceFormat,
 } from './ingest/sniffFormat';
+import { ptbToVexTabScore, ptbTuningToNoteNames } from './converters/powerTabConverter';
 import {
   gpScoreToChordPro,
   gpScoreTrackNames,
@@ -1199,6 +1201,45 @@ export default function App() {
         xmlLoadedRef.current = '';
         setAppMode('alphatab');
 
+      } else if (isPowerTabFormat(detected)) {
+        // ── Power Tab path ──
+        const { score, tuningMidi } = ptbToVexTabScore(arrayBuffer);
+        const tuningNotes = ptbTuningToNoteNames(tuningMidi);
+
+        setLoadedFilename(file.name);
+        setTabScoreData(score);
+        setTabTuning(tuningNotes);
+        setTabTuningPreset('Custom');
+        setTabPartIndex(0);
+        setTabRenderError('');
+        setDetectedFormatLabel('Power Tab');
+        setRenderError('');
+        setExportFeedback(null);
+        // Clear all other state
+        setLoadedXmlText('');
+        setPristineXmlText('');
+        setIsMxl(false);
+        setRenderedPageCount(0);
+        setPdfBlobUrl(null);
+        setChordProText('');
+        setChordProWarnings([]);
+        setChordProDiagnostics(null);
+        setCsmpnFakeBookText('');
+        setCsmpnWarnings([]);
+        setChartDocument(null);
+        setSongModel(null);
+        setTransposeWarnings([]);
+        setChartChordProText('');
+        setChartChordProWarnings([]);
+        setGpFileBuffer(null);
+        setGpVersion('');
+        setGpTracks([]);
+        setGpChordProText('');
+        setGpChordProWarnings([]);
+        if (containerRef.current) containerRef.current.innerHTML = '';
+        xmlLoadedRef.current = '';
+        setAppMode('tablature');
+
       } else if (isChordChartFormat(detected)) {
         // ── Chord-chart path ──
         const text = new TextDecoder('utf-8').decode(bytes);
@@ -1318,6 +1359,7 @@ export default function App() {
         setRenderError(
           'Unsupported file type. Upload .xml / .musicxml / .mxl (notation), ' +
           '.gp / .gp3 / .gp4 / .gp5 / .gpx (Guitar Pro), ' +
+          '.ptb (Power Tab), ' +
           '.cho / .chopro / .crd / .pro / .txt (chord chart), ' +
           'or .pdf (selectable-text chord sheet).'
         );

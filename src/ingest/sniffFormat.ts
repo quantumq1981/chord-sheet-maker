@@ -26,6 +26,7 @@ export type DetectedFormat =
   | { format: 'chords-over-words' }
   | { format: 'ascii_tab' }
   | { format: 'guitarpro'; version: string }
+  | { format: 'powertab' }
   | { format: 'pdf' }
   | { format: 'unknown' };
 
@@ -37,6 +38,19 @@ const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46] as const;
 
 // Guitar Pro file extensions
 const GP_EXTENSIONS = new Set(['gp', 'gp3', 'gp4', 'gp5', 'gpx', 'gp6', 'gp7']);
+
+// Power Tab magic bytes: "ptab"
+const PTB_MAGIC = [0x70, 0x74, 0x61, 0x62] as const;
+
+function hasPtbMagic(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 6 &&
+    bytes[0] === PTB_MAGIC[0] &&
+    bytes[1] === PTB_MAGIC[1] &&
+    bytes[2] === PTB_MAGIC[2] &&
+    bytes[3] === PTB_MAGIC[3]
+  );
+}
 
 // Canonical chord token pattern (root + optional quality + optional bass)
 const CHORD_TOKEN_RE =
@@ -124,7 +138,12 @@ function isChordLine(line: string): boolean {
 export function sniffFormatFromBytes(bytes: Uint8Array, filename = ''): DetectedFormat {
   const ext = fileExtension(filename);
 
-  // 1. Guitar Pro binary/header or extension match. This intentionally runs
+  // 1a. Power Tab binary magic: "ptab"
+  if (hasPtbMagic(bytes) || ext === 'ptb') {
+    return { format: 'powertab' };
+  }
+
+  // 1b. Guitar Pro binary/header or extension match. This intentionally runs
   // before ZIP detection because GPX/modern .gp files can be ZIP containers
   // too; otherwise Safari/iOS users see an XML/MXL parse error for GP uploads.
   const gp = detectGuitarPro(bytes, ext);
@@ -233,6 +252,10 @@ export function isAsciiTabFormat(detected: DetectedFormat): boolean {
 
 export function isPdfFormat(detected: DetectedFormat): boolean {
   return detected.format === 'pdf';
+}
+
+export function isPowerTabFormat(detected: DetectedFormat): boolean {
+  return detected.format === 'powertab';
 }
 
 export function asSourceFormat(detected: DetectedFormat): SourceFormat | null {
