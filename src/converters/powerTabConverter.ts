@@ -310,12 +310,11 @@ function parsePtb(buffer: ArrayBuffer): PTBParseResult {
     }
   }
 
-  // Fallback: scan the entire file for CPosition / CLineData class-ID references
+  // Fallback: sequential parse starting from the first CPosition's 0xFFFF marker
   if (measures.length === 0) {
-    const posCI  = findClass('CPosition');
-    const lineCI = findClass('CLineData');
-    if (posCI && lineCI) {
-      scanNotesByClassId(bytes, posCI.classId, lineCI.classId, classReg, measures);
+    const posCI = findClass('CPosition');
+    if (posCI) {
+      sequentialNoteFallback(buffer, posCI, classReg, measures);
     }
     if (measures.length === 0) {
       warnings.push('Note data could not be parsed; tuning is available.');
@@ -347,64 +346,59 @@ function readCountBefore(bytes: Uint8Array, markerPos: number): number {
   return 0;
 }
 
-// ─── Fallback: linear class-ID scan for CPosition / CLineData ────────────────
+// ─── Fallback: sequential parse from first CPosition ─────────────────────────
 
 /**
- * When the structural sequential parse fails (e.g. CSection body layout
- * differs between PTB versions), scan the entire file looking for 2-byte
- * class-ID references for CPosition and CLineData objects and extract
- * whatever note data we find.
+ * When the structural parse (CSection → CStaff → CPosition chain) fails,
+ * start from the first CPosition's guaranteed-valid 0xFFFF class-info marker
+ * and read tags sequentially, grouping every MEASURE_SIZE positions into a
+ * synthetic VexTabMeasure.
  *
- * Positions are grouped into synthetic measures of 16 positions each
- * (roughly 4 bars of 4/4 at quarter-note resolution).
+ * Starting at posCI.markerPos avoids the false-positive matches that arise
+ * when scanning from byte 0 — random bytes in the binary header can match
+ * 2-byte class IDs and produce hundreds of empty ghost positions.
  */
-function scanNotesByClassId(
-  bytes: Uint8Array,
-  posClassId: number,
-  lineClassId: number,
+function sequentialNoteFallback(
+  buffer: ArrayBuffer,
+  posCI: ClassInfo,
   classReg: Map<number, string>,
   measures: VexTabMeasure[],
 ): void {
-  const MEASURE_SIZE = 16; // positions per synthetic measure
+  const MEASURE_SIZE = 16;
   let currentMeasure: VexTabMeasure | null = null;
   let posCount = 0;
 
-  // Use a SharedArrayBuffer-safe approach: create a new buffer from bytes
-  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const r = new ByteReader(buf, 0, new Map(classReg));
+  const r = new ByteReader(buffer, posCI.markerPos, new Map(classReg));
 
-  while (r.remaining >= 2) {
-    const peek = r.peek16le();
+  try {
+    while (r.remaining >= 2) {
+      const saved = r.pos;
+      let tag: string | null = null;
+      try { tag = r.readTag(); } catch { break; }
 
-    if (peek !== posClassId && peek !== 0xFFFF && peek !== lineClassId) {
-      r.pos++;
-      continue;
-    }
-
-    // Save position and try to read a tag
-    const saved = r.pos;
-    let tagName: string | null = null;
-    try { tagName = r.readTag(); } catch { r.pos = saved + 1; continue; }
-
-    if (tagName === 'CPosition') {
-      // Group into synthetic measures
-      if (posCount % MEASURE_SIZE === 0) {
-        currentMeasure = { notes: [], chordSymbols: [] };
-        measures.push(currentMeasure);
+      if (tag === 'CPosition') {
+        if (posCount % MEASURE_SIZE === 0) {
+          currentMeasure = { notes: [], chordSymbols: [] };
+          measures.push(currentMeasure);
+        }
+        posCount++;
+        try {
+          if (currentMeasure) parsePositionBody(r, currentMeasure, []);
+        } catch {
+          r.pos = saved + 1;
+        }
+      } else if (tag === 'CLineData') {
+        // Orphaned line not consumed by parsePositionBody — skip its 7-byte body
+        try { r.u8(); r.skip(6); } catch { break; }
+      } else if (tag === 'CStaff') {
+        // Skip the 2-byte staff header (type + nrPositions hint) and continue
+        try { r.skip(2); } catch { break; }
+      } else {
+        // CSection boundary, null ref, or unknown tag — stop
+        break;
       }
-      posCount++;
-      if (currentMeasure) {
-        try { parsePositionBody(r, currentMeasure, []); }
-        catch { r.pos = saved + 1; }
-      }
-    } else if (tagName === 'CLineData') {
-      // Orphaned line — skip it (it was not consumed by a CPosition parse)
-      try { r.u8(); r.skip(6); } catch { /* ignore */ }
-    } else {
-      // Not a tag we care about — back up and advance by 1
-      r.pos = saved + 1;
     }
-  }
+  } catch { /* partial data */ }
 }
 
 // ─── Section / staff / position parsers ──────────────────────────────────────
