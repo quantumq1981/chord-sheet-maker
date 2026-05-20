@@ -272,9 +272,15 @@ function parsePtb(buffer: ArrayBuffer): PTBParseResult {
   }
 
   // ── Extract note data ─────────────────────────────────────────────────────
-  // Strategy: find the first CSection class-info marker and the nrSections
-  // byte (the byte immediately before the CSection 0xFFFF marker), then parse
-  // sequentially using the full class-registry for back-references.
+  // Strategy:
+  //  1. Find the first CSection class-info marker.
+  //  2. Determine nrSections from the bytes just before that marker.
+  //     PTB files store counts as either uint8 OR uint16-LE depending on
+  //     version; when bytes[markerPos-1] == 0, the count is in
+  //     bytes[markerPos-2] (low byte of a uint16-LE pair).
+  //  3. Parse sequentially using the class-ID registry.
+  //  4. If the sequential parse yields nothing (struct offsets wrong for this
+  //     file version), fall back to a linear class-ID scan of the whole file.
 
   const sectionCI = findClass('CSection');
   if (!sectionCI) {
@@ -282,31 +288,123 @@ function parsePtb(buffer: ArrayBuffer): PTBParseResult {
     return finalize(tuningMidi, guitarNames, [], warnings);
   }
 
-  // nrSections is 1 byte before the CSection 0xFFFF marker
-  const nrSections = bytes[sectionCI.markerPos - 1];
-  if (nrSections === 0 || nrSections > 200) {
-    warnings.push(`Cannot determine section count (byte=${nrSections}); no notes extracted.`);
-    return finalize(tuningMidi, guitarNames, [], warnings);
+  // Read nrSections: try 1 byte back, then 2 bytes back for uint16-LE files.
+  const nrSections = readCountBefore(bytes, sectionCI.markerPos);
+  if (nrSections === 0) {
+    warnings.push('Cannot determine section count; falling back to note scan.');
   }
 
   // Sequential parse starting from the first CSection's 0xFFFF marker
   const r = new ByteReader(buffer, sectionCI.markerPos, new Map(classReg));
   const measures: VexTabMeasure[] = [];
 
-  try {
-    for (let sec = 0; sec < nrSections; sec++) {
-      const tag = r.readTag();
-      if (tag !== 'CSection') break;
-      parseSectionBody(r, measures, warnings);
+  if (nrSections > 0) {
+    try {
+      for (let sec = 0; sec < nrSections; sec++) {
+        const tag = r.readTag();
+        if (tag !== 'CSection') break;
+        parseSectionBody(r, measures, warnings);
+      }
+    } catch {
+      // partial — fall through to fallback if empty
     }
-  } catch {
-    // Partial parse — return whatever we collected
+  }
+
+  // Fallback: scan the entire file for CPosition / CLineData class-ID references
+  if (measures.length === 0) {
+    const posCI  = findClass('CPosition');
+    const lineCI = findClass('CLineData');
+    if (posCI && lineCI) {
+      scanNotesByClassId(bytes, posCI.classId, lineCI.classId, classReg, measures);
+    }
     if (measures.length === 0) {
       warnings.push('Note data could not be parsed; tuning is available.');
     }
   }
 
   return finalize(tuningMidi, guitarNames, measures, warnings);
+}
+
+// ─── Count-byte helpers ───────────────────────────────────────────────────────
+
+/**
+ * Read the count stored immediately before a class-info 0xFFFF marker.
+ * PTB files may store counts as uint8 OR uint16-LE depending on version.
+ *
+ * - If bytes[markerPos-1] is in [1, 200] → that IS the count (uint8).
+ * - If bytes[markerPos-1] == 0 and bytes[markerPos-2] is in [1, 200]
+ *   → the count is uint16-LE: low byte at markerPos-2, high byte = 0.
+ * - Otherwise return 0 (unknown).
+ */
+function readCountBefore(bytes: Uint8Array, markerPos: number): number {
+  if (markerPos < 1) return 0;
+  const lo = bytes[markerPos - 1];
+  if (lo >= 1 && lo <= 200) return lo;
+  if (lo === 0 && markerPos >= 2) {
+    const prev = bytes[markerPos - 2];
+    if (prev >= 1 && prev <= 200) return prev;
+  }
+  return 0;
+}
+
+// ─── Fallback: linear class-ID scan for CPosition / CLineData ────────────────
+
+/**
+ * When the structural sequential parse fails (e.g. CSection body layout
+ * differs between PTB versions), scan the entire file looking for 2-byte
+ * class-ID references for CPosition and CLineData objects and extract
+ * whatever note data we find.
+ *
+ * Positions are grouped into synthetic measures of 16 positions each
+ * (roughly 4 bars of 4/4 at quarter-note resolution).
+ */
+function scanNotesByClassId(
+  bytes: Uint8Array,
+  posClassId: number,
+  lineClassId: number,
+  classReg: Map<number, string>,
+  measures: VexTabMeasure[],
+): void {
+  const MEASURE_SIZE = 16; // positions per synthetic measure
+  let currentMeasure: VexTabMeasure | null = null;
+  let posCount = 0;
+
+  // Use a SharedArrayBuffer-safe approach: create a new buffer from bytes
+  const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const r = new ByteReader(buf, 0, new Map(classReg));
+
+  while (r.remaining >= 2) {
+    const peek = r.peek16le();
+
+    if (peek !== posClassId && peek !== 0xFFFF && peek !== lineClassId) {
+      r.pos++;
+      continue;
+    }
+
+    // Save position and try to read a tag
+    const saved = r.pos;
+    let tagName: string | null = null;
+    try { tagName = r.readTag(); } catch { r.pos = saved + 1; continue; }
+
+    if (tagName === 'CPosition') {
+      // Group into synthetic measures
+      if (posCount % MEASURE_SIZE === 0) {
+        currentMeasure = { notes: [], chordSymbols: [] };
+        measures.push(currentMeasure);
+      }
+      posCount++;
+      if (currentMeasure) {
+        try { parsePositionBody(r, currentMeasure, []); }
+        catch { r.pos = saved + 1; }
+      }
+    } else if (tagName === 'CLineData') {
+      // Orphaned line — skip it (it was not consumed by a CPosition parse)
+      try { r.u8(); r.skip(6); } catch { /* ignore */ }
+    } else {
+      // Not a tag we care about — back up and advance by 1
+      r.pos = saved + 1;
+    }
+  }
 }
 
 // ─── Section / staff / position parsers ──────────────────────────────────────
@@ -324,7 +422,17 @@ function parseSectionBody(r: ByteReader, measures: VexTabMeasure[], warnings: st
   if (nrKey <= 16) r.skip(nrKey * 2);
   r.pascalStr();        // section title
 
-  const nrStaves = r.u8();
+  // nrStaves may be uint8 or the low byte of a uint16-LE pair
+  let nrStaves = r.u8();
+  if (nrStaves === 0 && r.remaining >= 1) {
+    // peek: if the next byte looks like a class tag low byte, nrStaves is
+    // the uint8 we just read (it really is 0). Otherwise it was the high
+    // byte of a uint16-LE and the value we want is the byte we consumed.
+    // Since uint16-LE 0x0000 = null ref and non-zero = class-ID or 0xFFFF,
+    // re-read the next byte as a potential low-byte override.
+    const next = r.bytes[r.pos];
+    if (next >= 1 && next <= 8) { nrStaves = next; r.pos++; }
+  }
   if (nrStaves === 0 || nrStaves > 8) return;
 
   for (let st = 0; st < nrStaves; st++) {
@@ -342,9 +450,15 @@ function parseStaffBody(
 ): void {
   // CStaff fields:
   //   clef / staff-type (uint8)
-  //   nr_positions (uint8)
+  //   nr_positions (uint8 or low byte of uint16-LE)
   r.u8();                         // staff type / clef
-  const nrPositions = r.u8();
+  let nrPositions = r.u8();
+  // If nrPositions landed on the high byte of a uint16-LE count (= 0),
+  // the actual count is in the next byte.
+  if (nrPositions === 0 && r.remaining >= 1) {
+    const next = r.bytes[r.pos];
+    if (next >= 1 && next <= 250) { nrPositions = next; r.pos++; }
+  }
 
   if (nrPositions === 0 || nrPositions > 250) return;
 
