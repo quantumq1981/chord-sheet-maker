@@ -173,6 +173,13 @@ class ByteReader {
     return v;
   }
 
+  u32le(): number {
+    if (this.pos + 4 > this.bytes.length) throw new Error('PTB EOF');
+    const v = this.view.getUint32(this.pos, true);
+    this.pos += 4;
+    return v;
+  }
+
   peek16le(): number {
     if (this.pos + 2 > this.bytes.length) return -1;
     return this.view.getUint16(this.pos, true);
@@ -183,6 +190,30 @@ class ByteReader {
     const len = this.u8();
     if (this.pos + len > this.bytes.length) throw new Error('PTB EOF in string');
     const s = new TextDecoder('utf-8', { fatal: false }).decode(
+      this.bytes.slice(this.pos, this.pos + len),
+    );
+    this.pos += len;
+    return s;
+  }
+
+  /**
+   * MFC-style variable-length string (PowerTabInputStream::ReadMFCString):
+   * ReadMFCStringLength reads 1 byte; if < 0xff return it; else read 2 more
+   * bytes; if < 0xffff return; else read 4 more bytes and return.
+   * Then reads that many chars.
+   */
+  readMfcString(): string {
+    const b0 = this.u8();
+    let len: number;
+    if (b0 < 0xff) {
+      len = b0;
+    } else {
+      const b12 = this.u16le();
+      len = b12 < 0xffff ? b12 : this.u32le();
+    }
+    if (len === 0) return '';
+    if (this.pos + len > this.bytes.length) throw new Error('PTB EOF in MFC string');
+    const s = new TextDecoder('latin1', { fatal: false }).decode(
       this.bytes.slice(this.pos, this.pos + len),
     );
     this.pos += len;
@@ -248,17 +279,20 @@ function parsePtb(buffer: ArrayBuffer): PTBParseResult {
 
   const guitarCI = findClass('CGuitar');
   if (guitarCI) {
-    // The byte immediately before the 0xFFFF marker is the guitar count.
-    // The first guitar's data starts at guitarCI.dataStart.
+    // Guitar::Deserialize layout (from PowerTabEditor source):
+    //   m_number (uint8) + ReadMFCString(m_description)
+    //   + m_preset+m_initialVolume+m_pan+m_reverb+m_chorus+m_tremolo+m_phaser+m_capo (8 × uint8)
+    //   + Tuning::Deserialize: ReadMFCString(name) + m_data(uint8)
+    //     + ReadSmallVector(m_noteArray): count(uint8) + count MIDI bytes
     try {
       const r = new ByteReader(buffer, guitarCI.dataStart, new Map(classReg));
-      r.u8();            // guitar index
-      const title = r.pascalStr();
-      if (title) guitarNames[0] = title;
-      r.u8();            // MIDI instrument
-      r.u8();            // capo
-      r.pascalStr();     // instrument type string
-      const nrStrings = r.u8();
+      r.u8();                    // m_number (guitar index)
+      const desc = r.readMfcString();
+      if (desc) guitarNames[0] = desc;
+      r.skip(8);                 // m_preset…m_capo (8 × uint8)
+      r.readMfcString();         // Tuning::m_name
+      r.u8();                    // Tuning::m_data (capo/sharps flags)
+      const nrStrings = r.u8();  // ReadSmallVector count
       if (nrStrings >= 4 && nrStrings <= 8 && r.remaining >= nrStrings) {
         tuningMidi = Array.from(bytes.slice(r.pos, r.pos + nrStrings));
       }
@@ -282,7 +316,7 @@ function parsePtb(buffer: ArrayBuffer): PTBParseResult {
   //  4. If the sequential parse yields nothing (struct offsets wrong for this
   //     file version), fall back to a linear class-ID scan of the whole file.
 
-  const sectionCI = findClass('CSection');
+  const sectionCI = findClass('CSystem') ?? findClass('CSection');
   if (!sectionCI) {
     warnings.push('No section data found in Power Tab file.');
     return finalize(tuningMidi, guitarNames, [], warnings);
@@ -387,9 +421,9 @@ function sequentialNoteFallback(
         } catch {
           r.pos = saved + 1;
         }
-      } else if (tag === 'CLineData') {
-        // Orphaned line not consumed by parsePositionBody — skip its 7-byte body
-        try { r.u8(); r.skip(6); } catch { break; }
+      } else if (tag === 'CNote') {
+        // Orphaned note not consumed by parsePositionBody — skip its body
+        try { r.u8(); r.u16le(); const nc = r.u8(); r.skip(nc * 4); } catch { break; }
       } else if (tag === 'CStaff') {
         // Skip the 2-byte staff header (type + nrPositions hint) and continue
         try { r.skip(2); } catch { break; }
@@ -442,91 +476,101 @@ function parseStaffBody(
   measures: VexTabMeasure[],
   warnings: string[],
 ): void {
-  // CStaff fields:
-  //   clef / staff-type (uint8)
-  //   nr_positions (uint8 or low byte of uint16-LE)
-  r.u8();                         // staff type / clef
-  let nrPositions = r.u8();
-  // If nrPositions landed on the high byte of a uint16-LE count (= 0),
-  // the actual count is in the next byte.
-  if (nrPositions === 0 && r.remaining >= 1) {
-    const next = r.bytes[r.pos];
-    if (next >= 1 && next <= 250) { nrPositions = next; r.pos++; }
-  }
-
-  if (nrPositions === 0 || nrPositions > 250) return;
+  // Staff::Deserialize (from PowerTabEditor source):
+  //   m_data (uint8) — clef/staff-type
+  //   m_standardNotationStaffAboveSpacing (uint8)
+  //   m_standardNotationStaffBelowSpacing (uint8)
+  //   m_symbolSpacing (uint8)
+  //   m_tablatureStaffBelowSpacing (uint8)
+  //   ReadVector(voice0): ReadCount(uint16) + [CPosition tag + pos_body] × count
+  //   ReadVector(voice1): ReadCount(uint16) + [CPosition tag + pos_body] × count
+  r.skip(5); // m_data + 4 spacing fields
 
   const measure: VexTabMeasure = { notes: [], chordSymbols: [] };
 
-  for (let p = 0; p < nrPositions; p++) {
+  // Voice 0 — primary melody
+  const nrPos0 = r.u16le();
+  if (nrPos0 > 250) return;
+  for (let p = 0; p < nrPos0; p++) {
     const tag = r.readTag();
     if (tag !== 'CPosition') break;
     parsePositionBody(r, measure, warnings);
   }
 
-  // Only keep the first staff per section (avoids duplicating notation+tab
-  // staves when both are present in one section)
+  // Voice 1 — secondary (parse to advance cursor, discard notes)
+  const nrPos1 = r.u16le();
+  if (nrPos1 <= 250) {
+    for (let p = 0; p < nrPos1; p++) {
+      const tag = r.readTag();
+      if (tag !== 'CPosition') break;
+      const dummy: VexTabMeasure = { notes: [], chordSymbols: [] };
+      parsePositionBody(r, dummy, []);
+    }
+  }
+
   if (staffIndex === 0 && measure.notes.length > 0) {
     measures.push(measure);
   }
 }
 
 function parsePositionBody(r: ByteReader, measure: VexTabMeasure, warnings: string[]): void {
-  // CPosition (8 bytes minimum):
-  //   offset       (uint8)
-  //   properties   (uint16 LE)
-  //   dots         (uint8)  — bit 0 = dotted
-  //   palm_mute    (uint8)
-  //   fermata      (uint8)
-  //   length       (uint8)  — 1=whole 2=half 4=quarter 8=8th 16=16th 32=32nd
-  //   nr_extra     (uint8)  — count of 4-byte extra-data blocks
-  r.u8();                  // offset
-  r.u16le();               // properties
-  const dots   = r.u8();
-  r.u8();                  // palm mute
-  r.u8();                  // fermata
-  const length = r.u8();
-  const nrExtra = r.u8();
-  if (nrExtra <= 32) r.skip(nrExtra * 4);
+  // Position::Deserialize (from PowerTabEditor source):
+  //   m_position  (uint8)   — horizontal index in measure
+  //   m_beaming   (uint16)  — beaming flags
+  //   m_data      (uint32)  — bits 31-24 = duration type, bit 2 = rest, bit 0 = dotted
+  //   ReadSmallVector(complexSymbols): count(uint8) + count × 4 bytes each
+  //   ReadVector(noteArray): ReadCount(uint16) + [CNote tag + note_body] × count
+  r.u8();                    // m_position
+  r.u16le();                 // m_beaming
+  const mData    = r.u32le();
 
-  const nrLines = r.u8();
-  if (nrLines > 8) {
-    warnings.push(`CPosition: unusual line count ${nrLines}`);
+  const nrComplex = r.u8();
+  if (nrComplex > 16) return; // sanity — max is 3 complex symbols per position
+  r.skip(nrComplex * 4);
+
+  const durType  = (mData >>> 24) & 0xFF;
+  const isDotted = (mData & 0x01) !== 0;
+  const isRest   = (mData & 0x04) !== 0;
+
+  // ReadCount() reads uint16 (= count for < 0xFFFF elements)
+  const nrNotes = r.u16le();
+  if (nrNotes > 8) {
+    // Probably misaligned — skip rather than consuming garbage
+    warnings.push(`CPosition: unexpected note count ${nrNotes}`);
     return;
   }
 
   const positions: VexTabPosition[] = [];
 
-  for (let l = 0; l < nrLines; l++) {
+  for (let l = 0; l < nrNotes; l++) {
     const tag = r.readTag();
-    if (tag !== 'CLineData') break;
+    if (tag !== 'CNote') break;
 
-    // CLineData (7 bytes):
-    //   tone   (uint8) — fret[4:0], string[7:5]
-    //   flags  (uint16 LE)
-    //   bend   (uint8)
-    //   slide  (uint8)
-    //   hammer (uint8)
-    //   pull   (uint8)
-    const tone = r.u8();
-    r.skip(6); // flags(2) + bend(1) + slide(1) + hammer(1) + pull(1)
+    // Note::Deserialize (from PowerTabEditor source):
+    //   m_stringData (uint8)  — bits 7-5 = string (0 = highest), bits 4-0 = fret
+    //   m_simpleData (uint16) — note flags (tied, muted, hammer-on, etc.)
+    //   ReadSmallVector(complexSymbols): count(uint8) + count × 4 bytes each
+    const stringData   = r.u8();
+    r.u16le();                    // m_simpleData flags
+    const nrNoteComplex = r.u8();
+    if (nrNoteComplex > 16) break; // sanity
+    r.skip(nrNoteComplex * 4);
 
-    const fret      = tone & 0x1F;         // bits 0–4
-    const ptbString = (tone >> 5) & 0x07;  // bits 5–7, 0 = highest string
-    const vexString = ptbString + 1;       // VexFlow: 1 = highest
+    const fret      = stringData & 0x1F;
+    const ptbString = (stringData >> 5) & 0x07;
+    const vexString = ptbString + 1;        // VexFlow: str 1 = highest string
 
     if (fret <= 24 && ptbString <= 7) {
       positions.push({ str: vexString, fret });
     }
   }
 
-  const dur      = PTB_DUR[length] ?? 'q';
-  const isDotted = (dots & 0x01) !== 0;
+  const dur = PTB_DUR[durType] ?? 'q';
 
   measure.notes.push({
     positions: positions.length > 0 ? positions : [{ str: 1, fret: 'x' }],
     duration: isDotted ? `${dur}d` : dur,
-    isRest: nrLines === 0,
+    isRest: isRest || nrNotes === 0,
   });
 }
 
