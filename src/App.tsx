@@ -322,29 +322,40 @@ async function alphaTabSvgsToPageCanvases(
   const marginIn = 0.5;
   const dpi = 96;
 
-  const stitched = await stitchCanvases(svgs, renderScale);
+  // Normalize the rasterization scale so SVG content fills the print page width
+  // exactly, regardless of the AlphaTab container's screen width.  Without this,
+  // a score rendered at a narrow mobile width gets stretched to fill the page and
+  // content at the right edge can overflow jsPDF's clip rect.
+  //
+  // Auto-detect orientation first (based on the first SVG's aspect ratio) so we
+  // can pick the right page dimension as the reference edge.
+  const firstSvg = svgs[0];
+  const svgW = firstSvg ? (firstSvg.viewBox.baseVal?.width || firstSvg.clientWidth || 0) : 0;
+  const svgH = firstSvg ? (firstSvg.viewBox.baseVal?.height || firstSvg.clientHeight || 0) : 0;
+  const orientationHint = svgH > 0 && svgW / svgH > 2; // wide strip → horizontal layout
+  const isLandscapePage = orientationHint;
+  const pageW = isLandscapePage ? (isLetter ? 11 : 11.69) : (isLetter ? 8.5 : 8.27);
+  const availW = (pageW - marginIn * 2) * dpi;
+  const effectiveScale = svgW > 0 ? (availW * renderScale) / svgW : renderScale;
+
+  const stitched = await stitchCanvases(svgs, effectiveScale);
   if (stitched.width === 0 || stitched.height === 0) return { pages: [], isLandscape: false };
 
-  // If canvas is more than 2× wider than tall, treat as horizontal/landscape layout
-  const isLandscape = stitched.width > stitched.height * 2;
+  // Reconfirm landscape from the stitched result (wide strip = horizontal layout)
+  const isLandscape = isLandscapePage || stitched.width > stitched.height * 2;
 
   // Page dimensions in inches (landscape swaps the long/short edges)
-  const pageW = isLandscape
-    ? (isLetter ? 11 : 11.69)
-    : (isLetter ? 8.5 : 8.27);
-  const pageH = isLandscape
-    ? (isLetter ? 8.5 : 8.27)
-    : (isLetter ? 11 : 11.69);
+  const pageFinalW = isLandscape ? (isLetter ? 11 : 11.69) : (isLetter ? 8.5 : 8.27);
+  const pageFinalH = isLandscape ? (isLetter ? 8.5 : 8.27) : (isLetter ? 11 : 11.69);
 
-  const availW = (pageW - marginIn * 2) * dpi;
-  const availH = (pageH - marginIn * 2) * dpi;
+  const availWFinal = (pageFinalW - marginIn * 2) * dpi;
+  const availH     = (pageFinalH - marginIn * 2) * dpi;
 
   const pages: HTMLCanvasElement[] = [];
 
   if (isLandscape) {
     // Slice horizontally: each column-chunk is one landscape page
-    // Scale so the canvas height fills availH; each page covers availW worth of canvas width
-    const pageWPx = Math.round((availW / availH) * stitched.height);
+    const pageWPx = Math.round((availWFinal / availH) * stitched.height);
     if (pageWPx <= 0) return { pages: [], isLandscape: true };
     const numPages = Math.ceil(stitched.width / pageWPx);
     for (let i = 0; i < numPages; i++) {
@@ -362,8 +373,11 @@ async function alphaTabSvgsToPageCanvases(
       pages.push(chunk);
     }
   } else {
-    // Slice vertically: each row-chunk is one portrait page
-    const pageHPx = (availH / availW) * stitched.width;
+    // Slice vertically: each row-chunk is one portrait page.
+    // Since effectiveScale normalises stitched.width to availWFinal * renderScale,
+    // pageHPx = availH * renderScale, giving a chunk whose aspect ratio exactly
+    // matches the available print area on every page.
+    const pageHPx = (availH / availWFinal) * stitched.width;
     const numPages = Math.ceil(stitched.height / pageHPx);
     for (let i = 0; i < numPages; i++) {
       const srcY = Math.round(i * pageHPx);
@@ -1640,7 +1654,17 @@ export default function App() {
   }, [baseName, getTabSvgEl, pdfPageSize, showExportError, showExportSuccess]);
 
   const getAlphaTabSvgEls = useCallback((): SVGSVGElement[] => {
-    return Array.from(document.querySelectorAll('.alphatab-container svg'));
+    return Array.from(document.querySelectorAll<SVGSVGElement>('.alphatab-container svg')).filter(
+      (svg) => {
+        // Exclude nested SVGs (inner chunks inside a page-wrapper SVG).
+        // AlphaTab nests per-system SVGs inside per-page wrapper SVGs; grabbing
+        // all descendants gives duplicate blank/content pairs → double page count.
+        if (svg.parentElement?.closest('svg')) return false;
+        // Exclude blank background SVGs that contain no rendered notation
+        // (they only have rect elements for the page background).
+        return svg.querySelector('path, text') !== null;
+      },
+    );
   }, []);
 
   const exportAlphaTabSvg = useCallback(() => {
@@ -1686,14 +1710,23 @@ export default function App() {
         ? (isLetter ? [11, 8.5] : [297, 210])
         : format;
       const pdf = new jsPDF({ orientation, unit, format: pageFormat });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const availableWidth = pageWidth - margin * 2;
+      const pageWidth  = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const availableWidth  = pageWidth  - margin * 2;
+      const availableHeight = pageHeight - margin * 2;
       for (let i = 0; i < pages.length; i++) {
         const canvas = pages[i];
         const jpegData = canvas.toDataURL('image/jpeg', 0.92);
         if (i > 0) pdf.addPage(pageFormat, orientation);
-        const imgH = canvas.height * availableWidth / canvas.width;
-        pdf.addImage(jpegData, 'JPEG', margin, margin, availableWidth, imgH, undefined, 'FAST');
+        // Aspect-ratio-constrained fit: scale to fill available width, but never
+        // exceed available height (would clip content at the page bottom).
+        const aspect = canvas.width / canvas.height;
+        let imgW = availableWidth;
+        let imgH = imgW / aspect;
+        if (imgH > availableHeight) { imgH = availableHeight; imgW = imgH * aspect; }
+        const x = margin + (availableWidth  - imgW) / 2;
+        const y = margin + (availableHeight - imgH) / 2;
+        pdf.addImage(jpegData, 'JPEG', x, y, imgW, imgH, undefined, 'FAST');
       }
       const blob = pdf.output('blob');
       const url = URL.createObjectURL(blob);
