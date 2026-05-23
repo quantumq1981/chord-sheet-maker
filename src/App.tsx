@@ -322,40 +322,26 @@ async function alphaTabSvgsToPageCanvases(
   const marginIn = 0.5;
   const dpi = 96;
 
-  // Normalize the rasterization scale so SVG content fills the print page width
-  // exactly, regardless of the AlphaTab container's screen width.  Without this,
-  // a score rendered at a narrow mobile width gets stretched to fill the page and
-  // content at the right edge can overflow jsPDF's clip rect.
-  //
-  // Auto-detect orientation first (based on the first SVG's aspect ratio) so we
-  // can pick the right page dimension as the reference edge.
-  const firstSvg = svgs[0];
-  const svgW = firstSvg ? (firstSvg.viewBox.baseVal?.width || firstSvg.clientWidth || 0) : 0;
-  const svgH = firstSvg ? (firstSvg.viewBox.baseVal?.height || firstSvg.clientHeight || 0) : 0;
-  const orientationHint = svgH > 0 && svgW / svgH > 2; // wide strip → horizontal layout
-  const isLandscapePage = orientationHint;
-  const pageW = isLandscapePage ? (isLetter ? 11 : 11.69) : (isLetter ? 8.5 : 8.27);
-  const availW = (pageW - marginIn * 2) * dpi;
-  const effectiveScale = svgW > 0 ? (availW * renderScale) / svgW : renderScale;
-
-  const stitched = await stitchCanvases(svgs, effectiveScale);
+  const stitched = await stitchCanvases(svgs, renderScale);
   if (stitched.width === 0 || stitched.height === 0) return { pages: [], isLandscape: false };
 
-  // Reconfirm landscape from the stitched result (wide strip = horizontal layout)
-  const isLandscape = isLandscapePage || stitched.width > stitched.height * 2;
+  // Detect orientation from the fully-stitched canvas, NOT from individual SVG strips.
+  // AlphaTab system strips are each wide-and-short (aspect > 2), so checking a single
+  // strip would always misfire as "landscape" even for a tall portrait score.
+  const isLandscape = stitched.width > stitched.height * 2;
 
   // Page dimensions in inches (landscape swaps the long/short edges)
-  const pageFinalW = isLandscape ? (isLetter ? 11 : 11.69) : (isLetter ? 8.5 : 8.27);
-  const pageFinalH = isLandscape ? (isLetter ? 8.5 : 8.27) : (isLetter ? 11 : 11.69);
+  const pageW = isLandscape ? (isLetter ? 11 : 11.69) : (isLetter ? 8.5 : 8.27);
+  const pageH = isLandscape ? (isLetter ? 8.5 : 8.27) : (isLetter ? 11 : 11.69);
 
-  const availWFinal = (pageFinalW - marginIn * 2) * dpi;
-  const availH     = (pageFinalH - marginIn * 2) * dpi;
+  const availW = (pageW - marginIn * 2) * dpi;
+  const availH = (pageH - marginIn * 2) * dpi;
 
   const pages: HTMLCanvasElement[] = [];
 
   if (isLandscape) {
-    // Slice horizontally: each column-chunk is one landscape page
-    const pageWPx = Math.round((availWFinal / availH) * stitched.height);
+    // Horizontal layout: slice canvas into column-width chunks
+    const pageWPx = Math.round((availW / availH) * stitched.height);
     if (pageWPx <= 0) return { pages: [], isLandscape: true };
     const numPages = Math.ceil(stitched.width / pageWPx);
     for (let i = 0; i < numPages; i++) {
@@ -373,11 +359,8 @@ async function alphaTabSvgsToPageCanvases(
       pages.push(chunk);
     }
   } else {
-    // Slice vertically: each row-chunk is one portrait page.
-    // Since effectiveScale normalises stitched.width to availWFinal * renderScale,
-    // pageHPx = availH * renderScale, giving a chunk whose aspect ratio exactly
-    // matches the available print area on every page.
-    const pageHPx = (availH / availWFinal) * stitched.width;
+    // Portrait layout: slice canvas into row-height chunks matching the page aspect ratio
+    const pageHPx = (availH / availW) * stitched.width;
     const numPages = Math.ceil(stitched.height / pageHPx);
     for (let i = 0; i < numPages; i++) {
       const srcY = Math.round(i * pageHPx);
