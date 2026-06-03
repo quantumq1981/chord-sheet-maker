@@ -31,7 +31,6 @@ import {
   gpScoreTrackNames,
   gpScoreNotePositions,
 } from './converters/guitarProConverter';
-import { transposeMusicXMLCached } from './converters/transposeMusicXML';
 import { parseChordChart } from './parsers/chordProParser';
 import { parseUgAscii } from './parsers/ugAsciiParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
@@ -54,6 +53,7 @@ import {
   alphaTabSvgsToPageCanvases,
 } from './utils/svgRaster';
 import { useOsmd } from './hooks/useOsmd';
+import { useTranspose } from './hooks/useTranspose';
 import OmrImportPanel from './components/OmrImportPanel';
 import {
   createOmrJob,
@@ -602,9 +602,8 @@ export default function App() {
   // ── Chord-chart mode state ──
   const [chartDocument, setChartDocument] = useState<ChordChartDocument | null>(null);
   const [songModel, setSongModel] = useState<UnifiedSongModel | null>(null);
-  const [transposeSemitones, setTransposeSemitones] = useState(0);
-  const [transposeEnharmonic, setTransposeEnharmonic] = useState<EnharmonicPreference>('auto');
-  const [transposeWarnings, setTransposeWarnings] = useState<string[]>([]);
+  // transpose state + the debounced MusicXML transpose effect live in useTranspose
+  // (called below, after pristineXmlText / setLoadedXmlText are available).
   const [detectedFormatLabel, setDetectedFormatLabel] = useState('');
   const [chartChordProText, setChartChordProText] = useState('');
   const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
@@ -705,19 +704,13 @@ export default function App() {
     renderedPageCount, setRenderedPageCount,
   } = useOsmd({ loadedXmlText, diagnostics, rehearsalTexts });
 
-  useEffect(() => {
-    if (!pristineXmlText) return;
-    // Debounce so holding +/- (or a fast slider sweep) coalesces into a single
-    // transpose + relayout instead of one full Θ(N) parse/render per intermediate
-    // step. transposeMusicXMLCached additionally makes re-visiting any previously
-    // computed transposition O(1).
-    const timer = window.setTimeout(() => {
-      const { xml, warnings } = transposeMusicXMLCached(pristineXmlText, transposeSemitones, transposeEnharmonic);
-      setLoadedXmlText(xml);
-      setTransposeWarnings(warnings);
-    }, 100);
-    return () => window.clearTimeout(timer);
-  }, [pristineXmlText, transposeSemitones, transposeEnharmonic]);
+  // ── Transpose state + debounced MusicXML transpose pipeline ──
+  const {
+    transposeSemitones, setTransposeSemitones,
+    transposeEnharmonic, setTransposeEnharmonic,
+    transposeWarnings, setTransposeWarnings,
+    adjustTranspose,
+  } = useTranspose({ pristineXmlText, setLoadedXmlText });
 
   // GP files: wire transpose semitones into AlphaTab settings so the renderer
   // re-applies notation.transpositionPitches and re-renders.
@@ -1869,10 +1862,6 @@ else{window.addEventListener('load',go,{once:true});}
   }, [chartDocument, pdfPageSize, showExportError]);
 
   // ── Chord-chart controls ──
-  const adjustTranspose = useCallback((delta: number) => {
-    setTransposeSemitones((prev) => Math.max(-12, Math.min(12, prev + delta)));
-  }, []);
-
   const displayTranspose = transposeSemitones;
 
   const chartExportPreview = useMemo(() => {
