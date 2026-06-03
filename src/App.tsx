@@ -54,6 +54,7 @@ import {
 } from './utils/svgRaster';
 import { useOsmd } from './hooks/useOsmd';
 import { useTranspose } from './hooks/useTranspose';
+import { canvasesToPdfBlob } from './services/exportService';
 import OmrImportPanel from './components/OmrImportPanel';
 import {
   createOmrJob,
@@ -1364,20 +1365,8 @@ export default function App() {
     const margin = isLetter ? 0.5 : 12;
     try {
       const canvas = await svgToCanvas(svg, 1.5);
-      const jpegData = canvas.toDataURL('image/jpeg', 0.92);
-      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const availW = pageW - margin * 2;
-      const availH = pageH - margin * 2;
-      const aspect = canvas.width / canvas.height;
-      let w = availW;
-      let h = w / aspect;
-      if (h > availH) { h = availH; w = h * aspect; }
-      const x = (pageW - w) / 2;
-      const y = margin;
-      pdf.addImage(jpegData, 'JPEG', x, y, w, h, undefined, 'FAST');
-      const blob = pdf.output('blob');
+      // Tab is a single page, top-aligned within the printable area.
+      const blob = canvasesToPdfBlob([canvas], { unit, format, margin, valign: 'top' });
       const url = URL.createObjectURL(blob);
       setPdfBlobUrl(url);
       setPdfFilename(`${baseName}.tab.pdf`);
@@ -1443,26 +1432,8 @@ export default function App() {
       const pageFormat: [number, number] = isLandscape
         ? (isLetter ? [11, 8.5] : [297, 210])
         : format;
-      const pdf = new jsPDF({ orientation, unit, format: pageFormat });
-      const pageWidth  = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const availableWidth  = pageWidth  - margin * 2;
-      const availableHeight = pageHeight - margin * 2;
-      for (let i = 0; i < pages.length; i++) {
-        const canvas = pages[i];
-        const jpegData = canvas.toDataURL('image/jpeg', 0.92);
-        if (i > 0) pdf.addPage(pageFormat, orientation);
-        // Aspect-ratio-constrained fit: scale to fill available width, but never
-        // exceed available height (would clip content at the page bottom).
-        const aspect = canvas.width / canvas.height;
-        let imgW = availableWidth;
-        let imgH = imgW / aspect;
-        if (imgH > availableHeight) { imgH = availableHeight; imgW = imgH * aspect; }
-        const x = margin + (availableWidth  - imgW) / 2;
-        const y = margin + (availableHeight - imgH) / 2;
-        pdf.addImage(jpegData, 'JPEG', x, y, imgW, imgH, undefined, 'FAST');
-      }
-      const blob = pdf.output('blob');
+      // PDF page assembly (fit + centre each page-canvas) lives in canvasesToPdfBlob.
+      const blob = canvasesToPdfBlob(pages, { unit, format: pageFormat, orientation, margin });
       const url = URL.createObjectURL(blob);
       setPdfBlobUrl(url);
       setPdfFilename(`${baseName}.alphatab.pdf`);
@@ -1497,34 +1468,15 @@ export default function App() {
       }
       const svgs = getRenderedSvgs(containerRef.current);
       if (svgs.length === 0) throw new Error('No rendered score found after applying print layout.');
-      const pdf = new jsPDF({ orientation: 'portrait', unit, format });
       const pagesToExport = typeof maxPages === 'number' ? svgs.slice(0, maxPages) : svgs;
 
-      // Rasterize every page in parallel — the SVG→Image decode inside
-      // svgToCanvas is the slow async step and the pages are independent. JPEG
-      // encoding and page placement stay sequential to preserve page order.
+      // Rasterize every page in parallel — the SVG→Image decode inside svgToCanvas
+      // is the slow async step and the pages are independent. The PDF page
+      // assembly (fit + centre each canvas) lives in canvasesToPdfBlob.
       const canvases = await Promise.all(
         pagesToExport.map((svg) => svgToCanvas(svg, 1.5)),
       );
-
-      for (let index = 0; index < canvases.length; index++) {
-        const canvas = canvases[index];
-        const jpegData = canvas.toDataURL('image/jpeg', 0.92);
-        if (index > 0) pdf.addPage(format, 'portrait');
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        const availableWidth = pageWidth - margin * 2;
-        const availableHeight = pageHeight - margin * 2;
-        const imgAspect = canvas.width / canvas.height;
-        let w = availableWidth;
-        let h = w / imgAspect;
-        if (h > availableHeight) { h = availableHeight; w = h * imgAspect; }
-        const x = (pageWidth - w) / 2;
-        const y = (pageHeight - h) / 2;
-        pdf.addImage(jpegData, 'JPEG', x, y, w, h, undefined, 'FAST');
-      }
-
-      const blob = pdf.output('blob');
+      const blob = canvasesToPdfBlob(canvases, { unit, format, margin });
       const url = URL.createObjectURL(blob);
       setPdfBlobUrl(url);
       setPdfFilename(`${baseName}.pdf`);
