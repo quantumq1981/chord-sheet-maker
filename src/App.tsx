@@ -1763,8 +1763,15 @@ export default function App() {
       const pdf = new jsPDF({ orientation: 'portrait', unit, format });
       const pagesToExport = typeof maxPages === 'number' ? svgs.slice(0, maxPages) : svgs;
 
-      for (let index = 0; index < pagesToExport.length; index++) {
-        const canvas = await svgToCanvas(pagesToExport[index], 1.5);
+      // Rasterize every page in parallel — the SVG→Image decode inside
+      // svgToCanvas is the slow async step and the pages are independent. JPEG
+      // encoding and page placement stay sequential to preserve page order.
+      const canvases = await Promise.all(
+        pagesToExport.map((svg) => svgToCanvas(svg, 1.5)),
+      );
+
+      for (let index = 0; index < canvases.length; index++) {
+        const canvas = canvases[index];
         const jpegData = canvas.toDataURL('image/jpeg', 0.92);
         if (index > 0) pdf.addPage(format, 'portrait');
         const pageWidth = pdf.internal.pageSize.getWidth();
