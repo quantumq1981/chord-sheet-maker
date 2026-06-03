@@ -534,6 +534,13 @@ select:disabled {
   margin-bottom: var(--space-3);
 }
 
+.export-hint {
+  margin: calc(-1 * var(--space-2)) 0 var(--space-3);
+  font-size: 0.78rem;
+  color: var(--muted, #64748b);
+  line-height: 1.35;
+}
+
 .export-feedback {
   padding: 0.55rem 0.75rem;
   border-radius: var(--radius);

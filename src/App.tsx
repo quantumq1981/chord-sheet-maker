@@ -1544,11 +1544,20 @@ export default function App() {
     const osmd = osmdRef.current;
     if (!osmd || renderedPageCount === 0) { showExportError('No rendered score found.'); return; }
     const zoomSnapshot = osmd.Zoom;
+
+    // Make the printed @page match the selected page size. The static print CSS
+    // only declares Letter, so an A4 score would otherwise print on a Letter page.
+    const pageStyle = document.createElement('style');
+    pageStyle.textContent =
+      `@page { size: ${pdfPageSize === 'a4' ? 'A4' : 'letter'} portrait; margin: 15mm 10mm 10mm 10mm; }`;
+    document.head.appendChild(pageStyle);
+
     let restored = false;
     const restoreAfterPrint = () => {
       if (restored) return;
       restored = true;
       window.removeEventListener('afterprint', restoreAfterPrint);
+      pageStyle.remove();
       restoreDisplayMode(osmd);
       osmd.Zoom = zoomSnapshot;
       osmd.render();
@@ -2557,18 +2566,20 @@ else{window.addEventListener('load',go,{once:true});}
                 </select>
 
                 <div className="export-actions">
-                  <button type="button" className="btn-primary" onClick={() => void exportPdf()} disabled={!canExportNotation}>
-                    Generate PDF
-                  </button>
-                  <button type="button" onClick={() => void exportVectorPdf()} disabled={!canExportNotation} title="Resolution-independent PDF: crisp at any zoom, smaller files, selectable text. Beta — if a score looks wrong, use Generate PDF.">
-                    Vector PDF (beta)
-                  </button>
-                  <button type="button" onClick={printScore} disabled={renderedPageCount === 0}>
+                  <button type="button" className="btn-primary" onClick={printScore} disabled={renderedPageCount === 0}
+                    title="Best quality. Opens the print dialog — on iPhone/iPad choose Save to Files to keep a sharp, vector PDF.">
                     Print / Save as PDF
+                  </button>
+                  <button type="button" onClick={() => void exportPdf()} disabled={!canExportNotation}
+                    title="One-tap raster PDF download — handy on desktop.">
+                    Quick PDF
+                  </button>
+                  <button type="button" onClick={() => void exportVectorPdf()} disabled={!canExportNotation} title="Resolution-independent PDF: crisp at any zoom, smaller files, selectable text. Beta — if a score looks wrong, use Print or Quick PDF.">
+                    Vector PDF (beta)
                   </button>
                   {renderedPageCount > 6 && (
                     <button type="button" onClick={() => void exportPdf(1)} disabled={!canExportNotation}>
-                      PDF (First Page)
+                      Quick PDF (First Page)
                     </button>
                   )}
                   <button type="button" onClick={exportSvg} disabled={!canExportNotation}>
@@ -2584,6 +2595,10 @@ else{window.addEventListener('load',go,{once:true});}
                     Download Diagnostics
                   </button>
                 </div>
+
+                <p className="hint export-hint">
+                  On iPhone/iPad, tap <strong>Print / Save as PDF</strong>, then choose <strong>Save to Files</strong> for the sharpest, vector result.
+                </p>
 
                 {pdfBlobUrl && (
                   <div className="pdf-ready-box">
