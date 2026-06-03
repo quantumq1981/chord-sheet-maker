@@ -57,21 +57,27 @@ export function findChordSourceTrack(
   let bestIdx = primaryTrackIndex;
   let bestScore = -1;
 
+  // Accumulate the chord-diagram count for every track during the single
+  // scoring pass so the winning track's `hasDiagrams` flag needs no second walk.
+  const diagByTrack = new Array<number>(score.tracks.length).fill(0);
+
   for (let ti = 0; ti < score.tracks.length; ti++) {
     const track = score.tracks[ti];
     const staff = track?.staves?.[0];
     if (!staff) continue;
 
     let s = 0;
+    let diag = 0;
     for (const bar of staff.bars) {
       for (const voice of bar.voices) {
         for (const beat of voice.beats) {
-          if (beat.chordId) s += 3;
+          if (beat.chordId) { s += 3; diag++; }
           else if (beat.text && looksLikeChordName(beat.text)) s += 1;
         }
       }
     }
     if (track.name?.toLowerCase().includes('chord')) s += 30;
+    diagByTrack[ti] = diag;
 
     if (s > bestScore) {
       bestScore = s;
@@ -81,20 +87,7 @@ export function findChordSourceTrack(
 
   if (bestScore <= 0) return { trackIdx: primaryTrackIndex, hasDiagrams: false };
 
-  // Determine whether winning track is diagram-based or text-based.
-  const wStaff = score.tracks[bestIdx]?.staves?.[0];
-  let diagCount = 0;
-  if (wStaff) {
-    for (const bar of wStaff.bars) {
-      for (const voice of bar.voices) {
-        for (const beat of voice.beats) {
-          if (beat.chordId) diagCount++;
-        }
-      }
-    }
-  }
-
-  return { trackIdx: bestIdx, hasDiagrams: diagCount > 0 };
+  return { trackIdx: bestIdx, hasDiagrams: diagByTrack[bestIdx] > 0 };
 }
 
 /**
@@ -199,7 +192,8 @@ export function gpScoreToChordPro(
     // ── Build (chord, lyric) pairs for this bar ──────────────────────────
     const pairs: Array<{ chord: string; lyric: string }> = [];
 
-    for (const beat of chordVoice.beats) {
+    for (let beatIdx = 0; beatIdx < chordVoice.beats.length; beatIdx++) {
+      const beat = chordVoice.beats[beatIdx];
       if (beat.isEmpty) continue;
 
       // Chord name: diagram name takes priority; chord-like text is fallback.
@@ -213,12 +207,12 @@ export function gpScoreToChordPro(
 
       // Lyric: from the melody track at the same beat position, when lyrics
       // mode is active. Beat index alignment works because all tracks in a GP
-      // file share the same bar/beat structure within each bar.
+      // file share the same bar/beat structure within each bar.  Using the loop
+      // index here keeps this O(1) instead of the O(beats) indexOf scan it
+      // replaces (which made the per-bar cost O(beats²)).
       let lyric = '';
       if (hasAnyLyrics) {
-        const melodyBeat = melodyStaff.bars[barIdx]?.voices[0]?.beats[
-          chordVoice.beats.indexOf(beat)
-        ];
+        const melodyBeat = melodyStaff.bars[barIdx]?.voices[0]?.beats[beatIdx];
         lyric = melodyBeat?.lyrics?.[0]?.trim() ?? '';
       }
 

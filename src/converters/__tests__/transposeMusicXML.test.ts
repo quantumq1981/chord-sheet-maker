@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { transposeMusicXML } from '../transposeMusicXML';
+import { transposeMusicXML, transposeMusicXMLCached } from '../transposeMusicXML';
 
 function compact(xml: string): string {
   return xml.replace(/\s+/g, ' ').trim();
@@ -114,5 +114,46 @@ describe('transposeMusicXML', () => {
     const result = transposeMusicXML(xml, 0);
     expect(result.xml).toBe(xml);
     expect(result.warnings).toEqual([]);
+  });
+});
+
+describe('transposeMusicXMLCached', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <note><pitch><step>C</step><octave>4</octave></pitch></note>
+      <harmony><root><root-step>C</root-step></root><kind>major</kind></harmony>
+    </measure>
+  </part>
+</score-partwise>`;
+
+  it('produces identical output to transposeMusicXML for the same inputs', () => {
+    for (const [steps, pref] of [[2, 'auto'], [-3, 'flats'], [5, 'sharps']] as const) {
+      expect(transposeMusicXMLCached(xml, steps, pref).xml)
+        .toBe(transposeMusicXML(xml, steps, pref).xml);
+    }
+  });
+
+  it('returns a referentially identical (cached) result on repeat calls', () => {
+    const first = transposeMusicXMLCached(xml, 4, 'auto');
+    const second = transposeMusicXMLCached(xml, 4, 'auto');
+    // Same object reference lets React/identity memoization short-circuit downstream work.
+    expect(second).toBe(first);
+    expect(second.xml).toBe(first.xml);
+  });
+
+  it('does not collide between different semitone or preference keys', () => {
+    const up = transposeMusicXMLCached(xml, 2, 'auto');
+    const down = transposeMusicXMLCached(xml, -2, 'auto');
+    const sharp = transposeMusicXMLCached(xml, 2, 'sharps');
+    expect(up.xml).not.toBe(down.xml);
+    expect(up.xml).toBe(transposeMusicXML(xml, 2, 'auto').xml);
+    expect(sharp.xml).toBe(transposeMusicXML(xml, 2, 'sharps').xml);
+  });
+
+  it('short-circuits a zero-semitone shift to the original text', () => {
+    expect(transposeMusicXMLCached(xml, 0).xml).toBe(xml);
   });
 });

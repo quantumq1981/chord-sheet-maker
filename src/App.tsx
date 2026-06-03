@@ -31,7 +31,7 @@ import {
   gpScoreTrackNames,
   gpScoreNotePositions,
 } from './converters/guitarProConverter';
-import { transposeMusicXML } from './converters/transposeMusicXML';
+import { transposeMusicXMLCached } from './converters/transposeMusicXML';
 import { parseChordChart } from './parsers/chordProParser';
 import { parseUgAscii } from './parsers/ugAsciiParser';
 import type { ChordChartDocument } from './models/ChordChartModel';
@@ -885,11 +885,26 @@ export default function App() {
     setAlphaTabNotePositions(alphaTabNotePositionsComputed);
   }, [alphaTabNotePositionsComputed]);
 
+  // Unique rehearsal-mark labels for the loaded score. Parsed once per file and
+  // reused across the display render and every export/print render so the SVG
+  // post-processing pass never has to re-parse the MusicXML string.
+  const rehearsalTexts = useMemo(
+    () => extractRehearsalMarkTexts(loadedXmlText),
+    [loadedXmlText],
+  );
+
   useEffect(() => {
     if (!pristineXmlText) return;
-    const { xml, warnings } = transposeMusicXML(pristineXmlText, transposeSemitones, transposeEnharmonic);
-    setLoadedXmlText(xml);
-    setTransposeWarnings(warnings);
+    // Debounce so holding +/- (or a fast slider sweep) coalesces into a single
+    // transpose + relayout instead of one full Θ(N) parse/render per intermediate
+    // step. transposeMusicXMLCached additionally makes re-visiting any previously
+    // computed transposition O(1).
+    const timer = window.setTimeout(() => {
+      const { xml, warnings } = transposeMusicXMLCached(pristineXmlText, transposeSemitones, transposeEnharmonic);
+      setLoadedXmlText(xml);
+      setTransposeWarnings(warnings);
+    }, 100);
+    return () => window.clearTimeout(timer);
   }, [pristineXmlText, transposeSemitones, transposeEnharmonic]);
 
   // GP files: wire transpose semitones into AlphaTab settings so the renderer
@@ -932,7 +947,6 @@ export default function App() {
         // Move rehearsal-mark boxes (section labels) into the vertical gap between
         // the preceding system and the system they head, centred in that whitespace.
         if (containerRef.current) {
-          const rehearsalTexts = extractRehearsalMarkTexts(loadedXmlText);
           repositionRehearsalMarksBetweenSystems(containerRef.current, osmd, rehearsalTexts);
         }
         setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
@@ -948,7 +962,7 @@ export default function App() {
       }
     };
     void render();
-  }, [loadedXmlText, zoom, diagnostics]);
+  }, [loadedXmlText, zoom, diagnostics, rehearsalTexts]);
 
   // ── PDF blob cleanup ──
   useEffect(() => {
@@ -1740,7 +1754,7 @@ export default function App() {
       if (containerRef.current) {
         try {
           repositionRehearsalMarksBetweenSystems(
-            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+            containerRef.current, osmd, rehearsalTexts,
           );
         } catch { /* don't block export */ }
       }
@@ -1780,12 +1794,12 @@ export default function App() {
       if (containerRef.current) {
         try {
           repositionRehearsalMarksBetweenSystems(
-            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+            containerRef.current, osmd, rehearsalTexts,
           );
         } catch { /* ignore */ }
       }
     }
-  }, [baseName, loadedXmlText, pdfPageSize, showExportError, showExportSuccess]);
+  }, [baseName, rehearsalTexts, pdfPageSize, showExportError, showExportSuccess]);
 
   const printScore = useCallback(() => {
     const osmd = osmdRef.current;
@@ -1802,7 +1816,7 @@ export default function App() {
       if (containerRef.current) {
         try {
           repositionRehearsalMarksBetweenSystems(
-            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+            containerRef.current, osmd, rehearsalTexts,
           );
         } catch { /* ignore */ }
       }
@@ -1814,7 +1828,7 @@ export default function App() {
       if (containerRef.current) {
         try {
           repositionRehearsalMarksBetweenSystems(
-            containerRef.current, osmd, extractRehearsalMarkTexts(loadedXmlText),
+            containerRef.current, osmd, rehearsalTexts,
           );
         } catch { /* don't block print */ }
       }
@@ -1825,7 +1839,7 @@ export default function App() {
       restoreAfterPrint();
       showExportError(`Print failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [loadedXmlText, pdfPageSize, renderedPageCount, showExportError]);
+  }, [rehearsalTexts, pdfPageSize, renderedPageCount, showExportError]);
 
   const printAlphaTab = useCallback(() => {
     const svgs = getAlphaTabSvgEls();
