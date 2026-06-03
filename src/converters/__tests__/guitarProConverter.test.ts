@@ -374,6 +374,22 @@ describe('gpScoreToChordPro', () => {
     expect(text).toContain('[G]there');
     expect(text).not.toContain('| C |');
   });
+
+  it('aligns lyrics to chords by beat position across many beats', () => {
+    // Four beats per bar guards the chord/lyric alignment: the lyric at each
+    // beat index must come from the melody beat at the SAME index (the fix that
+    // replaced an O(beats) indexOf scan with the loop index).
+    const beats = [
+      makeBeat({ chordId: '1', chord: makeChord('C'), lyrics: ['one'] }),
+      makeBeat({ chordId: '2', chord: makeChord('D'), lyrics: ['two'] }),
+      makeBeat({ chordId: '3', chord: makeChord('E'), lyrics: ['three'] }),
+      makeBeat({ chordId: '4', chord: makeChord('F'), lyrics: ['four'] }),
+    ];
+    const staff = makeStaff([makeBar([makeVoice(beats)])]);
+    const score = makeScore({ tracks: [makeTrack([staff])] });
+    const { text } = gpScoreToChordPro(score);
+    expect(text).toContain('[C]one[D]two[E]three[F]four');
+  });
 });
 
 // ─── findChordSourceTrack ─────────────────────────────────────────────────────

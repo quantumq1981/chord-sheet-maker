@@ -49,16 +49,46 @@ function getSystemBands(osmd: OpenSheetMusicDisplay): SystemBand[] {
 }
 
 /**
+ * Match a Y centre to the system band it falls inside.
+ * Generous upward tolerance (-60) because OSMD places rehearsal marks above the
+ * top staff line, which may be slightly above BorderTop.
+ */
+function matchBand(bands: SystemBand[], centerY: number): number {
+  return bands.findIndex((b) => centerY >= b.top - 60 && centerY <= b.bottom + 10);
+}
+
+/**
+ * Find the associated <rect> (the rehearsal box outline) by walking backward
+ * through siblings.  VexFlow StaveSection renders three consecutive siblings:
+ *   <rect>       ← box outline
+ *   <path d="">  ← empty artefact from ctx.stroke() after ctx.beginPath()
+ *   <text>       ← label
+ * so the <rect> is typically 2 siblings before <text>.
+ */
+function findRectSibling(textEl: Element): Element | null {
+  let sibling: Element | null = textEl.previousElementSibling;
+  for (let i = 0; i < 4 && sibling; i++) {
+    if (sibling.tagName === 'rect') return sibling;
+    sibling = sibling.previousElementSibling;
+  }
+  return null;
+}
+
+/**
  * After osmd.render(), translate every rehearsal-mark box+text in the SVG so
  * it sits vertically centred in the whitespace between the preceding system
  * and the system it heads.
  *
- * Detection strategy: VexFlow (OSMD's renderer) draws a StaveSection as three
- * consecutive siblings in the SVG: <rect> (the outline box), <path d=""> (an
- * empty stroke artefact), then <text> (the label).  We find the <text> by
- * exact content match, then search backward through siblings for the <rect>.
- * Both elements are moved by the same dy (modifying their "y" attributes
- * directly rather than adding a transform, which avoids nesting issues).
+ * Performance: this runs after every render (display, each export render, the
+ * restore render).  SVG elements are laid out independently of one another, so
+ * moving one mark cannot change another mark's geometry.  We therefore split the
+ * work into a READ phase (all `getBBox()` calls, no mutations) followed by a
+ * WRITE phase (all attribute mutations).  This collapses what was previously up
+ * to N interleaved read→write→read forced reflows into a single layout flush,
+ * while producing byte-identical results to the old interleaved version.
+ *
+ * The text/rect `y` attributes are adjusted directly (rather than via a
+ * transform) to avoid nesting issues.
  */
 export function repositionRehearsalMarksBetweenSystems(
   container: HTMLElement,
@@ -73,6 +103,10 @@ export function repositionRehearsalMarksBetweenSystems(
   const bands = getSystemBands(osmd);
   if (bands.length < 2) return;
 
+  // ── READ PHASE ── gather geometry only; no DOM mutations means getBBox()
+  // forces layout at most once for the whole batch.
+  const updates: Array<{ text: SVGTextElement; rect: Element | null; dy: number }> = [];
+
   svg.querySelectorAll<SVGTextElement>('text').forEach((textEl) => {
     const label = textEl.textContent?.trim() ?? '';
     if (!rehearsalTexts.has(label)) return;
@@ -84,13 +118,8 @@ export function repositionRehearsalMarksBetweenSystems(
 
     const centerY = bbox.y + bbox.height / 2;
 
-    // Which system does this mark currently sit inside?
-    // Generous upward tolerance (-60) because OSMD places rehearsal marks
-    // above the top staff line, which may be slightly above BorderTop.
-    const idx = bands.findIndex(
-      (b) => centerY >= b.top - 60 && centerY <= b.bottom + 10,
-    );
     // Skip marks in the first system (no preceding gap) or unmatched marks.
+    const idx = matchBand(bands, centerY);
     if (idx <= 0) return;
 
     const gapTop    = bands[idx - 1].bottom;
@@ -99,26 +128,20 @@ export function repositionRehearsalMarksBetweenSystems(
     if (gap < 5) return;
 
     const targetCenterY = gapTop + gap / 2;
-    const dy = targetCenterY - centerY;
-
-    // Move the <text> element by adjusting its y attribute.
-    const textY = parseFloat(textEl.getAttribute('y') ?? '0');
-    textEl.setAttribute('y', String(textY + dy));
-
-    // Find the associated <rect> (the rehearsal box outline) by walking
-    // backward through siblings.  VexFlow StaveSection renders:
-    //   <rect>  ← box outline
-    //   <path d="">  ← empty artefact from ctx.stroke() after ctx.beginPath()
-    //   <text>  ← label (the element we already found above)
-    // so the <rect> is typically 2 siblings before <text>.
-    let sibling: Element | null = textEl.previousElementSibling;
-    for (let i = 0; i < 4 && sibling; i++) {
-      if (sibling.tagName === 'rect') {
-        const rectY = parseFloat(sibling.getAttribute('y') ?? '0');
-        sibling.setAttribute('y', String(rectY + dy));
-        break;
-      }
-      sibling = sibling.previousElementSibling;
-    }
+    updates.push({
+      text: textEl,
+      rect: findRectSibling(textEl),
+      dy: targetCenterY - centerY,
+    });
   });
+
+  // ── WRITE PHASE ── apply all mutations together; layout is invalidated once.
+  for (const { text, rect, dy } of updates) {
+    const textY = parseFloat(text.getAttribute('y') ?? '0');
+    text.setAttribute('y', String(textY + dy));
+    if (rect) {
+      const rectY = parseFloat(rect.getAttribute('y') ?? '0');
+      rect.setAttribute('y', String(rectY + dy));
+    }
+  }
 }

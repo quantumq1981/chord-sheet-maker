@@ -232,3 +232,57 @@ export function transposeMusicXML(
 
   return { xml: new XMLSerializer().serializeToString(doc), warnings };
 }
+
+// ─── Memoized wrapper ──────────────────────────────────────────────────────
+// `transposeMusicXML` is pure, but each call re-parses and re-serializes the
+// entire document — Θ(N) in node count.  The transpose UI sweeps through a
+// small, repeating set of (semitones, preference) combinations over a stable
+// source string, so we cache results keyed by a cheap content hash plus the two
+// parameters.  Re-visiting any previously computed transposition is then O(1),
+// and because the cached result object (and its `xml` string) is returned by
+// reference, feeding it back into React state lets identity-based memoization
+// short-circuit the downstream parse/render cascade as well.
+
+function cheapHash(s: string): number {
+  // djb2 — allocation-free rolling hash, adequate for cache keying.
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
+
+interface TransposeResult { xml: string; warnings: string[] }
+
+const MAX_TRANSPOSE_CACHE = 48;
+const transposeCache = new Map<string, TransposeResult>();
+
+/**
+ * Cached front-end for {@link transposeMusicXML}.  Behaviour is identical to the
+ * underlying function; only repeated calls with the same (xml, semitones,
+ * preference) are accelerated.  A bounded LRU keeps memory in check across long
+ * editing sessions and file swaps.
+ */
+export function transposeMusicXMLCached(
+  xmlText: string,
+  semitones: number,
+  enharmonicPreference: EnharmonicPreference = 'auto',
+): TransposeResult {
+  const shift = normalizeSemitones(semitones);
+  if (shift === 0) return { xml: xmlText, warnings: [] };
+
+  const key = `${shift}|${enharmonicPreference}|${xmlText.length}|${cheapHash(xmlText)}`;
+  const cached = transposeCache.get(key);
+  if (cached) {
+    // LRU touch: re-insert so this entry becomes most-recently-used.
+    transposeCache.delete(key);
+    transposeCache.set(key, cached);
+    return cached;
+  }
+
+  const result = transposeMusicXML(xmlText, shift, enharmonicPreference);
+  transposeCache.set(key, result);
+  if (transposeCache.size > MAX_TRANSPOSE_CACHE) {
+    const oldest = transposeCache.keys().next().value;
+    if (oldest !== undefined) transposeCache.delete(oldest);
+  }
+  return result;
+}
