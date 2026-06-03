@@ -1497,6 +1497,49 @@ export default function App() {
     }
   }, [baseName, rehearsalTexts, pdfPageSize, showExportError, showExportSuccess]);
 
+  // Opt-in vector PDF (beta). Mirrors exportPdf's OSMD render orchestration but
+  // feeds the SVG pages straight into pdfkit (lazy-loaded) for resolution-
+  // independent output. The raster Generate PDF path above is left untouched as
+  // the reliable default/fallback.
+  const exportVectorPdf = useCallback(async () => {
+    const osmd = osmdRef.current;
+    if (!osmd) { showExportError('Renderer is not ready yet.'); return; }
+    if (getRenderedSvgs(containerRef.current).length === 0) { showExportError('No rendered score found.'); return; }
+
+    const zoomSnapshot = osmd.Zoom;
+    try {
+      showExportSuccess('Building vector PDF (beta)…');
+      applyPrintProfile(osmd, pdfPageSize);
+      osmd.Zoom = PRINT_ZOOM;
+      osmd.render();
+      if (containerRef.current) {
+        try {
+          repositionRehearsalMarksBetweenSystems(containerRef.current, osmd, rehearsalTexts);
+        } catch { /* don't block export */ }
+      }
+      const svgs = getRenderedSvgs(containerRef.current);
+      if (svgs.length === 0) throw new Error('No rendered score found after applying print layout.');
+      // Lazy-load the heavy pdfkit-based pipeline only when the user opts in.
+      const { svgsToVectorPdfBlob } = await import('./services/vectorPdf');
+      const blob = await svgsToVectorPdfBlob(svgs, { pageSize: pdfPageSize });
+      const url = URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+      setPdfFilename(`${baseName}.vector.pdf`);
+      showExportSuccess('Vector PDF (beta) ready. Tap Open PDF.');
+    } catch (error) {
+      showExportError(`Vector PDF failed: ${error instanceof Error ? error.message : String(error)}. Use Generate PDF for the standard export.`);
+    } finally {
+      restoreDisplayMode(osmd);
+      osmd.Zoom = zoomSnapshot;
+      osmd.render();
+      if (containerRef.current) {
+        try {
+          repositionRehearsalMarksBetweenSystems(containerRef.current, osmd, rehearsalTexts);
+        } catch { /* ignore */ }
+      }
+    }
+  }, [baseName, rehearsalTexts, pdfPageSize, showExportError, showExportSuccess]);
+
   const printScore = useCallback(() => {
     const osmd = osmdRef.current;
     if (!osmd || renderedPageCount === 0) { showExportError('No rendered score found.'); return; }
@@ -2516,6 +2559,9 @@ else{window.addEventListener('load',go,{once:true});}
                 <div className="export-actions">
                   <button type="button" className="btn-primary" onClick={() => void exportPdf()} disabled={!canExportNotation}>
                     Generate PDF
+                  </button>
+                  <button type="button" onClick={() => void exportVectorPdf()} disabled={!canExportNotation} title="Resolution-independent PDF: crisp at any zoom, smaller files, selectable text. Beta — if a score looks wrong, use Generate PDF.">
+                    Vector PDF (beta)
                   </button>
                   <button type="button" onClick={printScore} disabled={renderedPageCount === 0}>
                     Print / Save as PDF

@@ -18,8 +18,10 @@
     "jszip": "^3.10.1",
     "opensheetmusicdisplay": "^1.8.9",
     "pdfjs-dist": "^5.7.284",
+    "pdfkit": "^0.18.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "svg-to-pdfkit": "^0.1.8",
     "vexflow": "^5.0.0"
   },
   "devDependencies": {
@@ -27,6 +29,7 @@
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",
     "@types/node": "^25.3.2",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.2.0",
