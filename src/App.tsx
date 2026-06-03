@@ -53,6 +53,7 @@ import {
   canvasToBlob,
   alphaTabSvgsToPageCanvases,
 } from './utils/svgRaster';
+import { useOsmd } from './hooks/useOsmd';
 import OmrImportPanel from './components/OmrImportPanel';
 import {
   createOmrJob,
@@ -558,7 +559,6 @@ export default function App() {
 
   // ── Shared ──
   const [loadedFilename, setLoadedFilename] = useState('');
-  const [renderError, setRenderError] = useState('');
   const [exportFeedback, setExportFeedback] = useState<ExportFeedback | null>(null);
 
   // ── OMR integration state ──
@@ -579,18 +579,14 @@ export default function App() {
   const omrPollStartedAtRef = useRef<number>(0);
 
   // ── Notation (OSMD) mode state ──
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
-  const didAutoFitRef = useRef(false);
-  const xmlLoadedRef = useRef('');
+  // OSMD instance/refs, zoom, renderError, renderedPageCount and the render
+  // effect live in the useOsmd hook (called below, once its inputs exist).
   const chartRef = useRef<HTMLElement | null>(null);
   const [loadedXmlText, setLoadedXmlText] = useState('');
   const [pristineXmlText, setPristineXmlText] = useState('');
   const [isMxl, setIsMxl] = useState(false);
-  const [zoom, setZoom] = useState(1);
   const [pdfPageSize, setPdfPageSize] = useState<PdfPageSize>('letter');
   const [isDragging, setIsDragging] = useState(false);
-  const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [pdfFilename, setPdfFilename] = useState('score.pdf');
   const [chordProUi, setChordProUi] = useState<ChordProUiState>({
@@ -701,6 +697,14 @@ export default function App() {
     [loadedXmlText],
   );
 
+  // ── OSMD notation rendering (instance lifecycle, render effect, zoom) ──
+  const {
+    containerRef, osmdRef, didAutoFitRef, xmlLoadedRef,
+    setZoom, adjustZoom, fitWidth,
+    renderError, setRenderError,
+    renderedPageCount, setRenderedPageCount,
+  } = useOsmd({ loadedXmlText, diagnostics, rehearsalTexts });
+
   useEffect(() => {
     if (!pristineXmlText) return;
     // Debounce so holding +/- (or a fast slider sweep) coalesces into a single
@@ -722,55 +726,6 @@ export default function App() {
     if (!gpFileBuffer) return;
     setAlphaTabSettings((prev) => ({ ...prev, transposeSemitones }));
   }, [transposeSemitones, gpFileBuffer]);
-
-  // ── OSMD initialisation ──
-  useEffect(() => {
-    if (!containerRef.current || osmdRef.current) return;
-    osmdRef.current = new OpenSheetMusicDisplay(containerRef.current, {
-      autoResize: true,
-      drawingParameters: 'default',
-    });
-    return () => { osmdRef.current = null; };
-  }, []);
-
-  // ── OSMD render on XML / zoom change ──
-  useEffect(() => {
-    const render = async () => {
-      const osmd = osmdRef.current;
-      if (!osmd || !loadedXmlText) return;
-      if (!diagnostics?.isValidXml || !diagnostics.isMusicXml) {
-        if (containerRef.current) containerRef.current.innerHTML = '';
-        xmlLoadedRef.current = '';
-        setRenderedPageCount(0);
-        return;
-      }
-      try {
-        setRenderError('');
-        if (xmlLoadedRef.current !== loadedXmlText) {
-          await osmd.load(loadedXmlText);
-          xmlLoadedRef.current = loadedXmlText;
-        }
-        osmd.Zoom = zoom;
-        osmd.render();
-        // Move rehearsal-mark boxes (section labels) into the vertical gap between
-        // the preceding system and the system they head, centred in that whitespace.
-        if (containerRef.current) {
-          repositionRehearsalMarksBetweenSystems(containerRef.current, osmd, rehearsalTexts);
-        }
-        setRenderedPageCount(getRenderedSvgs(containerRef.current).length);
-        if (!didAutoFitRef.current) {
-          didAutoFitRef.current = true;
-          requestAnimationFrame(fitWidth);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setRenderError(message);
-        xmlLoadedRef.current = '';
-        setRenderedPageCount(0);
-      }
-    };
-    void render();
-  }, [loadedXmlText, zoom, diagnostics, rehearsalTexts]);
 
   // ── PDF blob cleanup ──
   useEffect(() => {
@@ -1307,10 +1262,6 @@ export default function App() {
   }, [omrFile, omrMode, pollOmrJob, stopOmrPolling]);
 
   // ── Notation controls ──
-  const adjustZoom = useCallback((delta: number) => {
-    setZoom((prev) => Math.max(0.4, Math.min(2.5, Number((prev + delta).toFixed(2)))));
-  }, []);
-
   const adjustAlphaTabZoom = useCallback((delta: number) => {
     setAlphaTabSettings((prev) => ({
       ...prev,
@@ -1319,21 +1270,6 @@ export default function App() {
         scale: Math.max(0.5, Math.min(2.0, Number((prev.display.scale + delta).toFixed(2)))),
       },
     }));
-  }, []);
-
-  const fitWidth = useCallback(() => {
-    const container = containerRef.current;
-    const osmd = osmdRef.current;
-    if (!container || !osmd) return;
-    const firstPage = container.querySelector('.osmd-page') as HTMLElement | null;
-    const containerWidth = container.clientWidth;
-    if (firstPage && firstPage.offsetWidth > 0) {
-      const ratio = containerWidth / firstPage.offsetWidth;
-      const target = osmd.Zoom * ratio;
-      setZoom(Math.max(0.4, Math.min(2.5, Number(target.toFixed(2)))));
-      return;
-    }
-    setZoom(containerWidth < 600 ? 0.6 : containerWidth < 900 ? 0.8 : 1.0);
   }, []);
 
   // ── Feedback helpers ──
