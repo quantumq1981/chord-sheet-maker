@@ -2414,6 +2414,10 @@ else{window.addEventListener('load',go,{once:true});}
               <div className="panel-section">
               <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>CSMPN Source</h2>
               <div className="export-actions">
+                <button type="button" className="btn-primary" onClick={() => void openInPro()}
+                  title="Send this chart (as CSMPN) to Chord Sheet Maker Pro for fake-book finishing & performance.">
+                  Open in Pro ↗
+                </button>
                 <button type="button" onClick={() => void copyChordPro(csmpnFakeBookText)} disabled={!csmpnFakeBookText}>
                   Copy CSMPN
                 </button>
@@ -2590,6 +2594,10 @@ else{window.addEventListener('load',go,{once:true});}
               <div className="panel-section">
                 <h2 className="section-label" style={{ marginBottom: '0.6rem' }}>CSMPN Source</h2>
                 <div className="export-actions">
+                  <button type="button" className="btn-primary" onClick={() => void openInPro()} disabled={!canExportNotation}
+                    title="Send this score (as CSMPN) to Chord Sheet Maker Pro for fake-book finishing & performance.">
+                    Open in Pro ↗
+                  </button>
                   <button type="button" onClick={() => void copyChordPro(csmpnFakeBookText)} disabled={!csmpnFakeBookText}>
                     Copy CSMPN
                   </button>
