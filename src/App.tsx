@@ -1712,6 +1712,59 @@ else{window.addEventListener('load',go,{once:true});}
     }
   }, [chordProUi, loadedFilename, loadedXmlText, showExportError, showExportSuccess]);
 
+  // ── Open in Chord Sheet Maker Pro (same-origin CSMPN handoff) ──
+  // Serializes the current (transposed) chart into a versioned envelope, stores
+  // it under a shared localStorage key, and navigates to Pro — which reads the
+  // key on load (see docs/HANDOFF-CONTRACT.md). CSMPN is Pro's native format;
+  // ChordPro/MusicXML are included as fallbacks. Purely additive: Pro is
+  // untouched until it adds the matching receiver.
+  const openInPro = useCallback(async () => {
+    try {
+      const title = getBaseFilename(loadedFilename) || 'Untitled';
+      const formats: { csmpn?: string; chordpro?: string; musicxml?: string } = {};
+
+      if (appMode === 'chord-chart' && chartDocument) {
+        formats.chordpro = serializeChordProFromDocument(chartDocument, transposeSemitones, chordProUi, transposeEnharmonic).text;
+        formats.csmpn = buildCsmpnFromChartDocument(chartDocument, transposeSemitones, title, transposeEnharmonic);
+      } else if (loadedXmlText && (appMode === 'notation' || appMode === 'tablature')) {
+        // Cap MusicXML so a large score can't blow the localStorage quota; the
+        // lightweight CSMPN/ChordPro always go through.
+        if (loadedXmlText.length <= 1_500_000) formats.musicxml = loadedXmlText;
+        const opts = buildChordProOptionsFromUI(chordProUi);
+        const cp = await convertMusicXmlToChordPro({ filename: loadedFilename, xmlText: loadedXmlText }, opts);
+        formats.chordpro = cp.chordPro;
+        const fb = await convertMusicXmlToChordPro({ filename: loadedFilename, xmlText: loadedXmlText }, { ...opts, formatMode: 'fakebook' });
+        formats.csmpn = buildCsmpnFakeBookSource(fb.chordPro, title, parseTempoFromMusicXml(loadedXmlText));
+      } else if (appMode === 'alphatab' && gpChordProText) {
+        formats.chordpro = gpChordProText;
+      }
+
+      if (!formats.csmpn && !formats.chordpro && !formats.musicxml) {
+        showExportError('Load a chart or score before sending to Pro.');
+        return;
+      }
+
+      const payload = {
+        v: 1,
+        source: 'chord-sheet-maker',
+        createdAt: new Date().toISOString(),
+        title,
+        transposeSemitones,
+        enharmonic: transposeEnharmonic,
+        formats,
+      };
+      localStorage.setItem('csm:handoff:v1', JSON.stringify(payload));
+
+      // Both apps are served from the same GitHub Pages origin, so localStorage
+      // is shared. Navigate (same tab) to avoid mobile popup blocking after await.
+      const proUrl = `${window.location.origin}/chord-sheet-maker-pro/?import=handoff`;
+      showExportSuccess('Sent to Pro — opening Chord Sheet Maker Pro…');
+      window.location.assign(proUrl);
+    } catch (error) {
+      showExportError(`Open in Pro failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [appMode, chartDocument, loadedXmlText, gpChordProText, loadedFilename, transposeSemitones, transposeEnharmonic, chordProUi, showExportError, showExportSuccess]);
+
   const copyChordPro = useCallback(async (text: string) => {
     if (!text) { showExportError('Nothing to copy.'); return; }
     try {
@@ -2325,6 +2378,10 @@ else{window.addEventListener('load',go,{once:true});}
                 <button type="button" onClick={generateChartCsmpn}>
                   Generate CSMPN Fake Book
                 </button>
+                <button type="button" onClick={() => void openInPro()}
+                  title="Send this chart (as CSMPN) to Chord Sheet Maker Pro for fake-book finishing & performance.">
+                  Open in Pro ↗
+                </button>
                 <button type="button" onClick={() => void copyChordPro(chartChordProText)}>
                   Copy ChordPro
                 </button>
@@ -2470,6 +2527,10 @@ else{window.addEventListener('load',go,{once:true});}
                   </button>
                   <button type="button" onClick={() => void generateCsmpnFakeBook()} disabled={!canExportNotation}>
                     Generate CSMPN
+                  </button>
+                  <button type="button" onClick={() => void openInPro()} disabled={!canExportNotation}
+                    title="Send this score (as CSMPN) to Chord Sheet Maker Pro for fake-book finishing & performance.">
+                    Open in Pro ↗
                   </button>
                   <button type="button" onClick={() => void copyChordPro(chordProText)} disabled={!chordProText}>
                     Copy
