@@ -3,7 +3,7 @@
 Lets `chord-sheet-maker` send the current chart to **`chord-sheet-maker-pro`** with one tap, using the fact that both apps are served from the **same origin** (`https://quantumq1981.github.io`) and therefore share `localStorage`. No backend, no file download.
 
 - **Sender:** `chord-sheet-maker` — *implemented* (the **Open in Pro ↗** button). Writes the envelope and navigates to Pro.
-- **Receiver:** `chord-sheet-maker-pro` — *to be added* (see the drop‑in below). Purely additive; runs only when explicitly invoked, so it cannot affect any existing Pro feature (PowerTab/.ptb, slash notation, hybrid, fake‑book, etc.).
+- **Receiver:** `chord-sheet-maker-pro` — *implemented* (PR #288, in `index.html`'s boot path). Purely additive; runs only when explicitly invoked, so it cannot affect any existing Pro feature (PowerTab/.ptb, slash notation, hybrid, fake‑book, etc.).
 
 ---
 
@@ -59,15 +59,25 @@ Add this **once**, early in Pro's boot (after `parseCSMPN` / the import pipeline
     var f = env.formats;
 
     // Prefer CSMPN (native), then ChordPro, then MusicXML.
+    // Pro's importers don't populate the editor themselves, so funnel every
+    // path through a CSMPN string and load it the way Pro's file-import
+    // handlers do (set source value → extractHeaderFromText → updatePreview).
+    var csmpn = null;
     if (f.csmpn) {
-      // CSMPN is Pro's source language — drop it straight into the editor.
-      var srcEl = document.getElementById('source');     // <-- Pro's source textarea id
-      if (srcEl) { srcEl.value = f.csmpn; }
-      if (typeof updatePreview === 'function') updatePreview();  // re-render
+      csmpn = f.csmpn;                                   // CSMPN is Pro's source language
     } else if (f.chordpro && typeof importChordPro === 'function') {
-      importChordPro(f.chordpro);
+      csmpn = importChordPro(f.chordpro);               // importChordPro() RETURNS CSMPN text
     } else if (f.musicxml && typeof importMusicXML === 'function') {
-      importMusicXML(f.musicxml);
+      var song = importMusicXML(f.musicxml);            // importMusicXML() RETURNS a SongModel
+      if (song && typeof song.toCSMPN === 'function') {
+        csmpn = song.toCSMPN({ barsPerRow: (typeof fbSettings === 'object' && fbSettings && fbSettings.barsPerRow) || 4 });
+      }
+    }
+    if (csmpn) {
+      var srcEl = document.getElementById('source');    // Pro's source textarea id
+      if (srcEl) { srcEl.value = (typeof filterLyricsLines === 'function') ? filterLyricsLines(csmpn) : csmpn; }
+      if (typeof extractHeaderFromText === 'function') extractHeaderFromText(srcEl ? srcEl.value : csmpn);
+      if (typeof updatePreview === 'function') updatePreview();  // re-render
     }
 
     // Optional: strip the query param so a manual refresh is clean.
@@ -79,8 +89,12 @@ Add this **once**, early in Pro's boot (after `parseCSMPN` / the import pipeline
 })();
 ```
 
-**Wire‑up notes for the Pro session:**
-- Replace `'source'` with Pro's actual source `<textarea>` id, and `updatePreview` / `importChordPro` / `importMusicXML` with the real function names from `importPipeline.js` / `renderer.js` (they exist: `importPipeline.js` exposes `importChordPro`, `importMusicXML`, `parseCSMPN`, etc.).
+**Wire‑up notes — confirmed against Pro (PR #288):**
+- **Source textarea id:** `source` — `document.getElementById('source')`.
+- **Preview refresh:** `updatePreview()` (`renderer.js`).
+- **ChordPro import:** `importChordPro(text)` (`importPipeline.js`) — **returns a CSMPN string**; set it as the source value.
+- **MusicXML import:** `importMusicXML(xml)` (`importPipeline.js`) — **returns a `SongModel`**, not editor text. Call `song.toCSMPN({ barsPerRow })` to get the CSMPN string. (Do **not** rely on `importMusicXML()` populating the editor — it doesn't.)
+- Pro's file-import handlers load CSMPN via `filterLyricsLines()` → `source.value` → `extractHeaderFromText()` → `updatePreview()`; the receiver mirrors that flow for every format.
 - If the CSMPN path should also run `expandCSMPNRepeats` or seed Fake Book settings, do that here — but keep it inside this isolated IIFE.
 - This adds an entry point and modifies **no** existing trigger, so PowerTab and every other feature are unaffected.
 
