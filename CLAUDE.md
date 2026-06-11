@@ -434,3 +434,20 @@ Test files live in `src/**/__tests__/`:
 | GP transpose | Wired 2026-05-12 — `transposeSemitones` synced into `alphaTabSettings.transposeSemitones` via `useEffect([transposeSemitones, gpFileBuffer])`; applied via `notation.transpositionPitches` in `buildSettings`. MusicXML files use `transposeMusicXML()` XML-level path instead. |
 | **GP files stuck at "Rendering score…" — never display** | **Fixed 2026-05-12 (PR #175)** — root cause was `api.renderScore(preParsedScore)` silently failing across the worker boundary. Fixed by calling `api.load(rawBytes)` in worker mode so the worker re-parses the bytes itself. See PR #175 for the full fix history (PRs #158, #161, #162, #165). |
 | GP key display in transpose bar | Fixed 2026-05-12 — `score.masterBars[0].keySignature` (AlphaTab `KeySignature` enum, -7…+7) extracted in `handleGpScoreLoaded`, stored as `gpKeyRoot`, fed into `transposeKeyDisplay` via `transposeChord`. |
+
+---
+
+## Handoff Contract — now a 3-app standard (2026-06-11)
+
+`docs/HANDOFF-CONTRACT.md` (the canonical spec) is no longer specific to this repo.
+The same-origin `localStorage["csm:handoff:v1"]` + `?import=handoff` handoff into
+**chord-sheet-maker-pro** now has **two senders**:
+
+- `chord-sheet-maker` (this repo) — `openInPro()` in `src/App.tsx`, `source: "chord-sheet-maker"`.
+- `tab-translator-pro` — `sendToPro()` in `TabDecoderPro.tsx`, `source: "tab-translator-pro"`;
+  exports the decoded chart as Pro's native CSMPN (`scoreToCSMPN`) plus ChordPro/MusicXML fallbacks.
+
+The receiver keys off `formats` (priority `csmpn → chordpro → musicxml`), so the
+`source` field is informational only — any same-origin app that writes a valid v1
+envelope is interoperable. The contract doc has been updated to document this; no
+code change in this repo was required.
