@@ -1,9 +1,13 @@
-# Chord Sheet Maker → Pro Handoff Contract (v1)
+# → Pro Handoff Contract (v1)
 
-Lets `chord-sheet-maker` send the current chart to **`chord-sheet-maker-pro`** with one tap, using the fact that both apps are served from the **same origin** (`https://quantumq1981.github.io`) and therefore share `localStorage`. No backend, no file download.
+Lets a sender app push the current chart to **`chord-sheet-maker-pro`** with one tap, using the fact that all three apps are served from the **same origin** (`https://quantumq1981.github.io`) and therefore share `localStorage`. No backend, no file download.
 
-- **Sender:** `chord-sheet-maker` — *implemented* (the **Open in Pro ↗** button). Writes the envelope and navigates to Pro.
-- **Receiver:** `chord-sheet-maker-pro` — *implemented* (PR #288, in `index.html`'s boot path). Purely additive; runs only when explicitly invoked, so it cannot affect any existing Pro feature (PowerTab/.ptb, slash notation, hybrid, fake‑book, etc.).
+- **Senders (both implemented):**
+  - `chord-sheet-maker` — the **Open in Pro ↗** button (`openInPro()` in `src/App.tsx`). `source: "chord-sheet-maker"`.
+  - `tab-translator-pro` — the **→ Chord Sheet Maker Pro** button in the Chart panel (`sendToPro()` in `TabDecoderPro.tsx`). `source: "tab-translator-pro"`. Tab Translator turns a tab/PDF/Guitar Pro/MusicXML/Power Tab file into a chord chart, exports it as Pro's native **CSMPN** (`scoreToCSMPN()`), and hands it over.
+- **Receiver:** `chord-sheet-maker-pro` — *implemented* (PR #288, in `index.html`'s boot path; status message is `source`-aware). Purely additive; runs only when explicitly invoked, so it cannot affect any existing Pro feature (PowerTab/.ptb, slash notation, hybrid, fake‑book, etc.).
+
+> The `source` field is informational only — the receiver keys off `formats` (priority `csmpn → chordpro → musicxml`), so **any** app that writes a valid v1 envelope and opens Pro with `?import=handoff` is interoperable. New senders just pick a unique `source` string.
 
 ---
 
