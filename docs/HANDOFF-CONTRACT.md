@@ -110,5 +110,35 @@ Add this **once**, early in Pro's boot (after `parseCSMPN` / the import pipeline
 
 ---
 
+## Reverse direction — "Decode this tab" (→ Tab Translator Pro)
+
+The handoff is **bidirectional**. A finishing app can hand a *raw tab file* (not a chart)
+**back** to **`tab-translator-pro`** for recognition with its fret→chord + key engine.
+
+- **Storage key:** `localStorage["ttp:decode:v1"]`
+- **Trigger param:** Tab Translator is opened at `…/Tab-Translator-Pro/?import=decode`
+- **Envelope (JSON):**
+  ```json
+  {
+    "v": 1,
+    "source": "chord-sheet-maker-pro",
+    "createdAt": "<ISO-8601>",
+    "filename": "song.gp",
+    "b64": "<base64 of the raw file bytes>"
+  }
+  ```
+- **No `format` field** — Tab Translator detects GP3-8 / GPX / Power Tab / MusicXML by magic
+  bytes (and `%PDF` for the PDF pipeline), exactly as its file-upload path does.
+- **Sender (implemented):** `chord-sheet-maker-pro` `index.html` — the
+  **Decode tab → Tab Translator Pro ↗** import-menu item (`fileInputDecode`): chunked-base64
+  the bytes (call-stack-safe), ~3 MB quota guard, write the envelope, same-tab navigate.
+- **Receiver (implemented):** `tab-translator-pro` `TabDecoderPro.tsx` — two on-mount effects
+  read+clear the key one-shot, `atob`→`Uint8Array`, and route to `parseGuitarProOrXML`
+  (xml/GP mode) or the PDF pipeline (gated on PDF.js load). Lands on part 0; the user
+  switches parts. Wrapped in try/catch; strips the query param.
+- Same versioning rule (`:v1` / `v:1`).
+
+---
+
 ## Versioning
-The key is suffixed `:v1` and the envelope carries `v: 1`. Any breaking change to the schema bumps both (`csm:handoff:v2`), so an old sender and new receiver never silently misinterpret a payload.
+The key is suffixed `:v1` and the envelope carries `v: 1`. Any breaking change to the schema bumps both (`csm:handoff:v2` / `ttp:decode:v2`), so an old sender and new receiver never silently misinterpret a payload.
