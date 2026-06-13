@@ -37,6 +37,7 @@ import type { ChordChartDocument } from './models/ChordChartModel';
 import type { UnifiedSongModel } from './types/unifiedSongModel';
 import SongAnalyticsPanel from './components/SongAnalyticsPanel';
 import ChordChart, { transposeChord, type EnharmonicPreference } from './renderers/ChordChart';
+import StageModeModal from './stage/StageModeModal';
 import VexFlowTabRenderer from './renderers/VexFlowTabRenderer';
 import {
   extractRehearsalMarkTexts,
@@ -610,6 +611,9 @@ export default function App() {
   const [chartChordProWarnings, setChartChordProWarnings] = useState<string[]>([]);
   const [chartTwoColumn, setChartTwoColumn] = useState(false);
   const [chartFontSize, setChartFontSize] = useState(100);
+  /** Raw source text of the loaded chart — used by Stage Mode chord stripping. */
+  const [chartSourceText, setChartSourceText] = useState('');
+  const [stageModeOpen, setStageModeOpen] = useState(false);
 
   // ── Tablature mode state ──
   const [tabTuning, setTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
@@ -869,6 +873,8 @@ export default function App() {
     if (containerRef.current) containerRef.current.innerHTML = '';
     // Chart
     setChartDocument(null);
+    setChartSourceText('');
+    setStageModeOpen(false);
     setSongModel(null);
     setTransposeSemitones(0);
     setTransposeWarnings([]);
@@ -1031,6 +1037,7 @@ export default function App() {
 
         setLoadedFilename(file.name);
         setChartDocument(doc);
+        setChartSourceText(text);
         setDetectedFormatLabel(formatLabels[detected.format] ?? detected.format);
         setTransposeWarnings([]);
         const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi, transposeEnharmonic);
@@ -1097,6 +1104,7 @@ export default function App() {
 
         setLoadedFilename(file.name);
         setChartDocument(pdfDoc);
+        setChartSourceText(trimmed);
         setDetectedFormatLabel(pdfFormatLabels[redetected.format] ?? 'PDF → Chord Chart');
         setTransposeWarnings([]);
         const pdfChartExport = serializeChordProFromDocument(pdfDoc, transposeSemitones, chordProUi, transposeEnharmonic);
@@ -1836,6 +1844,7 @@ else{window.addEventListener('load',go,{once:true});}
     const doc = parseChordChart(gpChordProText, 'chordpro');
     const chartExport = serializeChordProFromDocument(doc, transposeSemitones, chordProUi, transposeEnharmonic);
     setChartDocument(doc);
+    setChartSourceText(gpChordProText);
     setDetectedFormatLabel('Guitar Pro (ChordPro)');
     setChartChordProText(chartExport.text);
     setChartChordProWarnings([...gpChordProWarnings, ...chartExport.warnings]);
@@ -1847,7 +1856,7 @@ else{window.addEventListener('load',go,{once:true});}
     setExportFeedback(null);
     setAppMode('chord-chart');
   }, [gpChordProText, gpChordProWarnings, transposeSemitones, chordProUi, transposeEnharmonic,
-      setChartDocument, setDetectedFormatLabel, setChartChordProText, setChartChordProWarnings,
+      setChartDocument, setChartSourceText, setDetectedFormatLabel, setChartChordProText, setChartChordProWarnings,
       setLoadedXmlText, setPristineXmlText, setIsMxl, setRenderedPageCount, setRenderError,
       setExportFeedback, setAppMode]);
 
@@ -2332,7 +2341,11 @@ else{window.addEventListener('load',go,{once:true});}
                   <button type="button" onClick={() => void exportChordChartPdf()}>
                     Generate PDF
                   </button>
+                  <button type="button" className="btn-stage" onClick={() => setStageModeOpen(true)}>
+                    🎤 Stage Mode
+                  </button>
                 </div>
+                <p className="export-hint">Stage Mode strips all chords and renders large, dark-background lyric sheets (PDF / auto-scroll HTML / batch ZIP) for live performance.</p>
                 {pdfBlobUrl && pdfFilename && (
                   <div className="pdf-ready-box">
                     <a href={pdfBlobUrl} download={pdfFilename} className="btn-primary">
@@ -2960,6 +2973,20 @@ else{window.addEventListener('load',go,{once:true});}
           )}
         </aside>
       </main>
+
+      {appMode === 'chord-chart' && (
+        <StageModeModal
+          open={stageModeOpen}
+          onClose={() => setStageModeOpen(false)}
+          sourceText={chartSourceText}
+          sourceFormat={chartDocument?.sourceFormat ?? 'chordpro'}
+          transposeSteps={transposeSemitones}
+          enharmonicPreference={transposeEnharmonic}
+          baseFilename={baseName}
+          defaultPageSize={pdfPageSize === 'a4' ? 'a4' : 'letter'}
+          onFeedback={(type, message) => setExportFeedback({ type, message })}
+        />
+      )}
     </div>
   );
 }

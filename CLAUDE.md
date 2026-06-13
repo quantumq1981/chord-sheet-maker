@@ -214,6 +214,36 @@ transposeEnharmonic: EnharmonicPreference  — 'auto' | 'flats' | 'sharps', defa
 
 ---
 
+## Stage Mode — Chord-Free Lyric Sheets
+
+Files: `src/stage/stageMode.ts` (pure logic), `src/stage/stageBatch.ts` (file intake),
+`src/stage/StageModeModal.tsx` (UI). Available in `chord-chart` mode via the
+**🎤 Stage Mode** button in the Print / Export panel.
+
+Strips ALL chord information from a chart and renders large-type, dark-background,
+lyrics-only output for live iPad / foot-pedal use.
+
+- `extractStageSheet(rawText, sourceFormat, opts)` → `StageLyricSheet` (sections of
+  lyric lines + headers + transposed key/tempo/capo metadata). Works on the **raw
+  source text**, not the parsed `ChordChartDocument`, because the tokenizer
+  `trimEnd()`s the pre-bracket lyric segment and would jam words together
+  ("I'm [Am]your" → "I'myour"). Raw `[...]` stripping preserves spacing exactly.
+  Handles ChordPro directives (`{c:…}`, `{soc}`, `{sot}`-tab skip), UG `[Section]`
+  headers, inline `[chord]` brackets, and standalone chords-over-words lines.
+  Sections with no lyrics (Intro / Instrumental / Solo) are dropped.
+- `buildStagePdf` / `buildCombinedStagePdf` — jsPDF (`unit: 'pt'`) dark pages,
+  Helvetica bold body, courier meta box top-right, centered title, 1.5 line spacing.
+- `buildStageHtml` — standalone self-contained auto-scroll page (adjustable
+  seconds-per-line), works on iPad Safari.
+- `buildStageZip` — JSZip of one PDF per song (+ optional combined PDF).
+- `filesToStageEntries` (batch) — sniff + PDF-text-extract each uploaded file;
+  per-file failures are collected, never abort the batch.
+
+Metadata box: `Key: <transposed> | <tempo> BPM | Capo: <n>`. Colour schemes:
+white-on-black (default) or neon `#B0FF00`-on-black.
+
+---
+
 ## MusicXML → ChordPro Conversion Engine
 
 File: `src/converters/musicXMLtochordpro.ts`

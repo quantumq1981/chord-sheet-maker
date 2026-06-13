@@ -66,7 +66,7 @@ const SECTION_END = new Set([
 ]);
 
 /** Recognizes UG-style section headers like [Verse 1] or [Chorus]. */
-const UG_SECTION_RE =
+export const UG_SECTION_RE =
   /^\[(Verse|Chorus|Bridge|Intro|Outro|Pre-?Chorus|Interlude|Hook|Solo|Instrumental|Refrain)[^\]]*\]$/i;
 
 /** Chord token pattern used by the chords-over-words heuristic. */
@@ -139,7 +139,7 @@ function makeSection(type: SectionType = 'unknown', label?: string): ChartSectio
 }
 
 /** Return true when every non-empty token in the line looks like a chord name. */
-function isChordLine(line: string): boolean {
+export function isChordLine(line: string): boolean {
   const tokens = line.trim().split(/\s+/).filter(Boolean);
   if (tokens.length < 1) return false;
   const chordCount = tokens.filter((t) => CHORD_TOKEN_RE.test(t)).length;
