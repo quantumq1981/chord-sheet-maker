@@ -24,10 +24,10 @@ const SEMITONE_MAP_FLATS: Array<{ step: string; alter: number }> = [
   { step: 'B', alter: -1 }, { step: 'B', alter: 0 },
 ];
 
-// Golden rule: Bb/Eb/Ab always flat; F# over Gb; Db default (C# for minor chord roots)
+// Family default: Bb/Eb/Ab flat, C#/F# sharp — ALWAYS (never A#/Db/D#/Gb/G#)
 const SEMITONE_MAP_AUTO: Array<{ step: string; alter: number }> = [
   { step: 'C', alter: 0 },   // 0  C
-  { step: 'D', alter: -1 },  // 1  Db (overridden to C# for minor chord roots)
+  { step: 'C', alter: 1 },   // 1  C# (family default: never Db)
   { step: 'D', alter: 0 },   // 2  D
   { step: 'E', alter: -1 },  // 3  Eb
   { step: 'E', alter: 0 },   // 4  E
@@ -43,13 +43,12 @@ const SEMITONE_MAP_AUTO: Array<{ step: string; alter: number }> = [
 function semitoneToStepAlter(
   semitone: number,
   pref: EnharmonicPreference,
-  isMinorContext = false,
+  _isMinorContext = false,
 ): { step: string; alter: number } {
   const s = ((semitone % 12) + 12) % 12;
   if (pref === 'sharps') return SEMITONE_MAP_SHARPS[s];
   if (pref === 'flats') return SEMITONE_MAP_FLATS[s];
-  // auto: at semitone 1 (Db/C#), use C# for minor chord roots
-  if (s === 1 && isMinorContext) return { step: 'C', alter: 1 };
+  // auto = family default: C# at semitone 1 ALWAYS (major or minor) — never Db
   return SEMITONE_MAP_AUTO[s];
 }
 
