@@ -37,20 +37,19 @@ export type EnharmonicPreference = 'auto' | 'flats' | 'sharps';
 // All-sharps scale used as the canonical semitone index
 const CHROMATIC_SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 const CHROMATIC_FLATS  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
-// Golden rule: Bb/Eb/Ab always flat; F# over Gb; Db default (C# for minor roots)
-const CHROMATIC_AUTO   = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
+// Family default: Bb/Eb/Ab flat, C#/F# sharp — ALWAYS (never A#/Db/D#/Gb/G#)
+const CHROMATIC_AUTO   = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'] as const;
 
 /** Normalise flat enharmonics to their sharp equivalents for index lookup. */
 const ENHARMONIC: Record<string, string> = {
   Db: 'C#', Eb: 'D#', Fb: 'E', Gb: 'F#', Ab: 'G#', Bb: 'A#', Cb: 'B',
 };
 
-function semitoneToName(semitone: number, pref: EnharmonicPreference, isMinor = false): string {
+function semitoneToName(semitone: number, pref: EnharmonicPreference, _isMinor = false): string {
   const s = ((semitone % 12) + 12) % 12;
   if (pref === 'sharps') return CHROMATIC_SHARPS[s];
   if (pref === 'flats')  return CHROMATIC_FLATS[s];
-  // auto: at semitone 1 (Db/C#), use C# for minor chord roots
-  if (s === 1 && isMinor) return 'C#';
+  // auto = family default: C# at semitone 1 ALWAYS (major or minor) — never Db
   return CHROMATIC_AUTO[s];
 }
 

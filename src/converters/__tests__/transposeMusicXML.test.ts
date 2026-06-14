@@ -89,7 +89,7 @@ describe('transposeMusicXML', () => {
     expect(oneLine).toContain('<root-step>C</root-step><root-alter>1</root-alter>');
   });
 
-  it('auto mode uses Db (not C#) for major chord roots at semitone 1', () => {
+  it('auto mode uses C# (not Db) for major chord roots at semitone 1 (family default)', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0">
   <part-list><score-part id="P1"><part-name>Music</part-name></score-part></part-list>
@@ -103,10 +103,10 @@ describe('transposeMusicXML', () => {
   </part>
 </score-partwise>`;
 
-    // B major +2 semitones = Db major (semitone 1, major context → Db)
+    // B major +2 semitones = C# major (family default: semitone 1 is ALWAYS C#, never Db)
     const result = transposeMusicXML(xml, 2);
     const oneLine = compact(result.xml);
-    expect(oneLine).toContain('<root-step>D</root-step><root-alter>-1</root-alter>');
+    expect(oneLine).toContain('<root-step>C</root-step><root-alter>1</root-alter>');
   });
 
   it('returns source unchanged when semitones is zero', () => {

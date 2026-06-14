@@ -219,10 +219,15 @@ lowest valid fret (0–22) not already occupied by another note in the chord gro
 
 All transpose paths share `EnharmonicPreference = 'auto' | 'flats' | 'sharps'`, controlled by a `<select>` in the transpose bar UI.
 
-### Golden-rule auto mode
-- Bb, Eb, Ab → always flat
-- F# preferred over Gb
-- At semitone 1 (the Db/C# toss-up): Db for major chord roots, C# for minor/diminished roots
+### Auto mode = family enharmonic default (2026-06-14)
+The `auto` default ALWAYS spells the five black keys **Bb · C# · Eb · F# · Ab** —
+never A#/Db/D#/Gb/G# — matching the whole app family. (Previously `auto` used a
+key/quality "golden rule" that produced Db for major roots at semitone 1; that
+key-dependence is removed.)
+- Bb, Eb, Ab → flat; C#, F# → sharp; ALWAYS, regardless of key or major/minor.
+- `SEMITONE_MAP_AUTO[1]` is `C#`; `CHROMATIC_AUTO[1]` is `C#`. The minor-context
+  plumbing remains in the signatures but no longer changes the spelling.
+- Explicit `'flats'` / `'sharps'` preferences still force pure spelling.
 
 ### Files
 | File | Role |
