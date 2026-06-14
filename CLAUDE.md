@@ -1,6 +1,30 @@
 # CLAUDE.md — chord-sheet-maker
 
-Last updated: 2026-05-01
+Last updated: 2026-06-14
+
+---
+
+## 🎸 The Chord Sheet Maker Pro App Family
+
+These three repositories are **one product family** — a music-chart pipeline that
+shares a common GitHub Pages origin (`quantumq1981.github.io`), a versioned
+same-origin `localStorage` handoff contract, and **CSMPN** as its lingua franca.
+The family is **recognize → normalize → finish**:
+
+| Repo | Role in the family | Stage |
+|------|--------------------|-------|
+| **Tab-Translator-Pro** | Recognition front-end — decodes tab / PDF / Guitar Pro (3–8 / GPX) / Power Tab / MusicXML into chord charts; exports CSMPN, CSML, ChordPro, ABC, MusicXML. | **Recognize** |
+| **chord-sheet-maker** | MusicXML normalizer & converter workbench — OSMD/AlphaTab in-browser rendering, MusicXML / MXL / Guitar Pro → ChordPro / CSMPN. The lab where parsing matures. | **Normalize** |
+| **chord-sheet-maker-pro** | The finishing app — fake-book layout, Slash-Rhythm View, audio playback, print/PDF, setlists; native CSMPN + ChordSlashML authoring. The stage. | **Finish** |
+
+**Shared rails:**
+- **CSMPN** (Chord Sheet Maker Pro Notation) is the canonical interchange text; ChordPro / MusicXML / CSML ride alongside.
+- **Same-origin localStorage handoff** — forward `csm:handoff:v1` (→ Pro, `?import=handoff`) and reverse `ttp:decode:v1` (→ Tab Translator, `?import=decode`). Versioned; any same-origin sender interoperable. Canonical spec: `docs/HANDOFF-CONTRACT.md` (lives in this repo).
+- All three are **client-side, iOS-Safari-first, zero-server** static web apps on GitHub Pages.
+
+**This repo is the family's converter workbench / lab (the "normalize" stage).**
+
+---
 
 ## Project Role
 
