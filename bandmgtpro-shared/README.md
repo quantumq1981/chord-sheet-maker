@@ -36,11 +36,16 @@ are allowed for future round-tripping.
 
 ## Adopting the theme (Phase 2, per app — all additive)
 
-**1. Set the active lighting mode** on the root element (default = `dark-venue` if unset):
+**1. Opt a subtree into a lighting mode.** The file is **side-effect-free** — bare
+`:root` only defines geometry/type tokens, so importing it changes nothing until you set
+a mode. Color tokens (and `color-scheme`) apply only under `data-stage-theme`:
 
 ```html
 <html data-stage-theme="dark-venue">   <!-- or day-stage | red-light-safe -->
 ```
+
+A light desk app (e.g. chord-sheet-maker) can load the file for the geometry/type tokens
+and simply **not** set a mode — its own colors are untouched.
 
 **2a. chord-sheet-maker (Vite/TS):** copy/symlink `bandmgtpro-theme.css` into `public/`
 and `import` it, or map the tokens into Tailwind:
