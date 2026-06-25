@@ -15,6 +15,24 @@ skill citations.
 | File | What | Phase |
 |------|------|-------|
 | `bandmgtpro-theme.css` | Stage design tokens — `dark-venue` / `day-stage` / `red-light-safe` lighting modes, glanceable type scale, iOS touch targets | 1a |
+| `bandmgtpro-song-model.schema.json` | Canonical Unified Song Model JSON Schema (draft-07), v1.0.0 — the documented interchange contract | 1b |
+| `songModel.mjs` | Zero-dep runtime guard for the schema: `validateSongModel` / `assertSongModel` / `createEmptySongModel` + `SONG_MODEL_VERSION` / `SEMANTIC_TIERS` / `SOURCE_FORMATS`. Pure ES — runs in the browser and under vitest/Node | 1b |
+| `__tests__/songModel.test.mjs` | 12 vitest specs: invariants, drift guard (schema↔validator enums), and real `ug_ascii_parser` output conforms | 1b |
+
+## Using the song model
+
+```js
+import { createEmptySongModel, validateSongModel, assertSongModel } from './songModel.mjs';
+
+const song = createEmptySongModel({ title: 'Blue Sky', source: { format: 'gp5', semanticTier: 'tier_3_fretted' } });
+const { valid, errors } = validateSongModel(song);   // never throws
+assertSongModel(song);                                // throws on the first contract breach
+```
+
+Enforced invariants (from the techspec): `schemaVersion` major-compatible; `source.format`/`semanticTier`
+in the known enums; `metadata` present; **`lossMap` mandatory** (no silent fake precision); every
+harmony event carries **both** its authored `symbol` and `normalized.root`. Extra/`sourceNative` fields
+are allowed for future round-tripping.
 
 ## Adopting the theme (Phase 2, per app — all additive)
 

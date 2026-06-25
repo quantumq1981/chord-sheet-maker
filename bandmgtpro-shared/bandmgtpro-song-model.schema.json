@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://quantumq1981.github.io/bandmgtpro/bandmgtpro-song-model.schema.json",
+  "title": "BandMgtPro Unified Song Model",
+  "description": "Canonical interchange schema for the BandMgtPro three-app family. Promoted from Unified-Song-Model+Ug-Ascii-JSparser-Techspec.md. Preserves three parallel truths: what the source said (sourceNative/symbol), what the parser inferred (normalized/detected), and how safe that inference is (confidence/lossMap). The runtime guard is the zero-dependency validator in songModel.mjs; this JSON Schema is the documented contract.",
+  "type": "object",
+  "required": ["schemaVersion", "source", "metadata", "lossMap"],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Semver. Major version must match the consumer's SONG_MODEL_VERSION major.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "songId": { "type": "string" },
+    "title": { "type": "string" },
+    "creators": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "composer": { "type": "array", "items": { "type": "string" } },
+        "lyricist": { "type": "array", "items": { "type": "string" } },
+        "arranger": { "type": "array", "items": { "type": "string" } },
+        "artist": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["format", "semanticTier"],
+      "additionalProperties": true,
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["musicxml", "lilypond", "gp3", "gp4", "gp5", "gpx", "gp", "alphatex", "chordpro", "abc", "ug_text", "ascii_tab", "plain_text", "csmpn", "csml", "midi", "powertab", "pdf"]
+        },
+        "semanticTier": {
+          "type": "string",
+          "enum": ["tier_4_structured", "tier_3_fretted", "tier_2_leadsheet", "tier_1_ascii"]
+        },
+        "sourceNative": { "type": "object" },
+        "importer": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "name": { "type": "string" },
+            "version": { "type": "string" },
+            "warnings": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "key": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "display": { "type": "string" },
+            "concert": { "type": "string" },
+            "detected": { "type": "boolean" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "timeSignature": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "numerator": { "type": "integer", "minimum": 1 },
+            "denominator": { "type": "integer", "minimum": 1 },
+            "pickupBeats": { "type": "number", "minimum": 0 },
+            "changes": { "type": "array" }
+          }
+        },
+        "tempo": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "bpm": { "type": ["number", "null"] },
+            "text": { "type": ["string", "null"] },
+            "beatUnit": { "type": "string" },
+            "changes": { "type": "array" }
+          }
+        },
+        "capo": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "fret": { "type": ["integer", "null"] },
+            "sourceDeclared": { "type": "boolean" }
+          }
+        },
+        "tuning": { "type": "array" }
+      }
+    },
+    "structure": { "type": "object" },
+    "timeline": { "type": "object" },
+    "parts": { "type": "array" },
+    "harmony": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "globalProgression": { "type": "array" },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["symbol", "normalized"],
+            "additionalProperties": true,
+            "properties": {
+              "measure": { "type": "integer" },
+              "beat": { "type": "number" },
+              "symbol": { "type": "string" },
+              "normalized": {
+                "type": "object",
+                "required": ["root"],
+                "additionalProperties": true,
+                "properties": {
+                  "root": { "type": ["string", "null"] },
+                  "qualityFamily": { "type": ["string", "null"] },
+                  "extensions": { "type": "array" },
+                  "alterations": { "type": "array" },
+                  "suspension": { "type": ["string", "null"] },
+                  "bass": { "type": ["string", "null"] }
+                }
+              },
+              "sourceNative": { "type": "string" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "grid": { "type": "object" }
+      }
+    },
+    "lyrics": { "type": "object" },
+    "analytics": { "type": "object" },
+    "lossMap": {
+      "type": "object",
+      "required": ["warnings"],
+      "additionalProperties": true,
+      "properties": {
+        "rhythmExplicit": { "type": "boolean" },
+        "voicingExplicit": { "type": "boolean" },
+        "layoutExplicit": { "type": "boolean" },
+        "lyricsAligned": { "type": "boolean" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "renderHints": { "type": "object" }
+  }
+}
