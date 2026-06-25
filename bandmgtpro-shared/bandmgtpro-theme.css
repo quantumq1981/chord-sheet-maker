@@ -1,0 +1,175 @@
+/*
+ * bandmgtpro-theme.css — BandMgtPro family stage design tokens
+ * ---------------------------------------------------------------------------
+ * ONE token source for the three-app chord/tab family (Tab-Translator-Pro,
+ * chord-sheet-maker, chord-sheet-maker-pro). Pure CSS custom properties, so it
+ * drops into the Vite app AND the zero-build CDN monoliths identically — no
+ * build step, no framework, no dependency.
+ *
+ * Design intent (anthropics/skills -> theme-factory): components must be
+ * GLANCEABLE under stage lighting and TOUCH-FRIENDLY. Three lighting modes,
+ * one variable contract. A user crossing from one tool to another perceives no
+ * border because every surface reads the same tokens.
+ *
+ * Usage (additive — changes nothing until referenced):
+ *   <link rel="stylesheet" href="bandmgtpro-theme.css">
+ *   <html data-stage-theme="dark-venue">         (default if unset)
+ *   button { background: var(--bmp-accent); min-height: var(--bmp-touch-min); }
+ *
+ * Tailwind (Phase 2+): map these into `@theme { --color-accent: var(--bmp-accent) }`.
+ * ---------------------------------------------------------------------------
+ */
+
+/* ===== Mode-independent tokens (geometry, type scale, motion) ============== */
+:root {
+  /* Touch targets — iOS HIG minimum is 44px; stage use wants generous. */
+  --bmp-touch-min: 44px;
+  --bmp-touch-comfortable: 56px;
+  --bmp-tap-gap: 12px;
+
+  /* Glanceable type scale (rem; base assumed 16px). Floors are deliberately
+     large — a chart must be readable at arm's length on a music stand. */
+  --bmp-font-chord: 1.5rem;      /* chord symbols — the thing you read mid-song */
+  --bmp-font-lyric: 1.125rem;
+  --bmp-font-title: 1.75rem;
+  --bmp-font-section: 1rem;
+  --bmp-font-meta: 0.875rem;
+  --bmp-font-ui: 1rem;
+  --bmp-line-tight: 1.15;
+  --bmp-line-body: 1.5;
+  --bmp-font-weight-chord: 700;
+
+  /* Spacing + shape */
+  --bmp-space-1: 4px;
+  --bmp-space-2: 8px;
+  --bmp-space-3: 12px;
+  --bmp-space-4: 16px;
+  --bmp-space-6: 24px;
+  --bmp-space-8: 32px;
+  --bmp-radius: 10px;
+  --bmp-radius-lg: 16px;
+  --bmp-border-w: 1px;
+
+  /* Focus ring — visible for accessibility + keyboard/stage-foot-pedal nav */
+  --bmp-focus-ring: 3px;
+
+  /* Motion — honored but minimal on stage */
+  --bmp-transition: 120ms ease;
+}
+
+/* ===== Mode: dark-venue (DEFAULT) ========================================= *
+ * Dim club / low ambient light. Dark surface, bright-but-not-blinding text.
+ * Default so an app that forgets to set data-stage-theme still looks right.   */
+:root,
+[data-stage-theme="dark-venue"] {
+  --bmp-bg:            #0b0b0f;
+  --bmp-surface:       #17171d;
+  --bmp-surface-2:     #22222b;
+  --bmp-text:          #f5f6f8;
+  --bmp-text-muted:    #9aa0a6;
+  --bmp-accent:        #ff6b35;  /* family orange (matches Setlist Gen) */
+  --bmp-accent-text:   #0b0b0f;  /* text ON accent fills */
+  --bmp-border:        #3a3a44;
+  --bmp-chord:         #ffd9c7;  /* chord symbols pop warm against dark */
+  --bmp-lyric:         #e6e8eb;
+  --bmp-success:       #4ade80;
+  --bmp-warning:       #fbbf24;
+  --bmp-danger:        #ef4444;
+  --bmp-focus:         #ff6b35;
+  --bmp-shadow:        0 2px 8px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+/* ===== Mode: day-stage ==================================================== *
+ * Bright outdoor / festival daylight washing out the screen. Maximum luminance
+ * contrast: near-black ink on near-white paper, heavier weights. This is the
+ * "I can't see anything in the sun" mode.                                     */
+[data-stage-theme="day-stage"] {
+  --bmp-bg:            #ffffff;
+  --bmp-surface:       #f2f3f5;
+  --bmp-surface-2:     #e4e6e9;
+  --bmp-text:          #0a0a0a;
+  --bmp-text-muted:    #44474c;
+  --bmp-accent:        #b8350f;  /* darkened orange — stays legible in sun */
+  --bmp-accent-text:   #ffffff;
+  --bmp-border:        #b8bcc2;
+  --bmp-chord:         #0a0a0a;  /* pure ink — overtakes glare */
+  --bmp-lyric:         #1a1a1a;
+  --bmp-success:       #15803d;
+  --bmp-warning:       #92600a;
+  --bmp-danger:        #b91c1c;
+  --bmp-focus:         #b8350f;
+  --bmp-shadow:        0 1px 3px rgba(0, 0, 0, 0.25);
+  --bmp-font-weight-chord: 800; /* heavier to fight washout */
+  color-scheme: light;
+}
+
+/* ===== Mode: red-light-safe =============================================== *
+ * Red stage wash / night-vision preservation. Monochrome red-on-black ONLY —
+ * no blue light, no competing hues. Everything (accents, states) expressed as
+ * red luminance steps so the eye stays dark-adapted.                          */
+[data-stage-theme="red-light-safe"] {
+  --bmp-bg:            #000000;
+  --bmp-surface:       #160202;
+  --bmp-surface-2:     #240404;
+  --bmp-text:          #ff5a4d;
+  --bmp-text-muted:    #8c2f2a;
+  --bmp-accent:        #ff2d1a;
+  --bmp-accent-text:   #000000;
+  --bmp-border:        #5a1410;
+  --bmp-chord:         #ff7a6e;  /* brightest red step = most important glyphs */
+  --bmp-lyric:         #d94a40;
+  --bmp-success:       #ff8a7e;  /* states are red-luminance steps, not green */
+  --bmp-warning:       #ff6a5a;
+  --bmp-danger:        #ff3322;
+  --bmp-focus:         #ff5a4d;
+  --bmp-shadow:        none;     /* shadows muddy red-on-black */
+  color-scheme: dark;
+}
+
+/* ===== Optional: respect OS high-contrast on top of any mode =============== */
+@media (prefers-contrast: more) {
+  :root {
+    --bmp-border-w: 2px;
+    --bmp-focus-ring: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --bmp-transition: 0ms; }
+}
+
+/* ===== Minimal opt-in helper classes ====================================== *
+ * Apps may use these directly or just read the variables. Kept intentionally
+ * tiny — the tokens are the product; these are conveniences.                  */
+.bmp-surface {
+  background: var(--bmp-surface);
+  color: var(--bmp-text);
+  border: var(--bmp-border-w) solid var(--bmp-border);
+  border-radius: var(--bmp-radius);
+}
+
+.bmp-btn {
+  min-height: var(--bmp-touch-min);
+  padding: 0 var(--bmp-space-4);
+  font-size: var(--bmp-font-ui);
+  border-radius: var(--bmp-radius);
+  border: var(--bmp-border-w) solid var(--bmp-border);
+  background: var(--bmp-surface-2);
+  color: var(--bmp-text);
+  transition: background var(--bmp-transition), border-color var(--bmp-transition);
+  cursor: pointer;
+}
+.bmp-btn--accent {
+  background: var(--bmp-accent);
+  color: var(--bmp-accent-text);
+  border-color: var(--bmp-accent);
+  font-weight: 600;
+}
+.bmp-btn:focus-visible {
+  outline: var(--bmp-focus-ring) solid var(--bmp-focus);
+  outline-offset: 2px;
+}
+
+.bmp-chord { color: var(--bmp-chord); font-weight: var(--bmp-font-weight-chord); font-size: var(--bmp-font-chord); }
+.bmp-lyric { color: var(--bmp-lyric); font-size: var(--bmp-font-lyric); line-height: var(--bmp-line-body); }
