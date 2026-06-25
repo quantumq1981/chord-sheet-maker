@@ -1,0 +1,35 @@
+name: CI
+
+# Runs the test suite (and a typecheck/build) on every push and pull request.
+# The deploy workflow also gates on `npm test` before publishing to Pages, but
+# this gives pre-merge signal on PRs (deploy.yml only runs on main).
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build (typecheck + bundle)
+        run: npm run build
