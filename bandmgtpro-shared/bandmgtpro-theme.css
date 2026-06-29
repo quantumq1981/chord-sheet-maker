@@ -62,6 +62,19 @@
 
   /* Motion — honored but minimal on stage */
   --bmp-transition: 120ms ease;
+
+  /* Brand accent — MODE-INDEPENDENT (the family orange is the brand color in
+     both light and dark apps), so apps can unify their accent WITHOUT opting
+     into a stage lighting mode. The per-mode blocks below still override
+     --bmp-accent for stage views.
+       --bmp-accent      bright brand orange — use as a FILL on DARK backgrounds.
+       --bmp-accent-ink  deep burnt orange — legible as TEXT/border on LIGHT
+                         backgrounds AND as a fill with white text (≥4.5:1 both
+                         ways), so it's the right pick for the light fake-book apps.
+       --bmp-accent-contrast  text color to sit on an --bmp-accent-ink fill. */
+  --bmp-accent: #ff6b35;
+  --bmp-accent-ink: #b8350f;
+  --bmp-accent-contrast: #ffffff;
 }
 
 /* ===== Mode: dark-venue ==================================================== *
