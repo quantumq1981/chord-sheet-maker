@@ -13,8 +13,15 @@
  *
  * Usage (additive — changes nothing until referenced):
  *   <link rel="stylesheet" href="bandmgtpro-theme.css">
- *   <html data-stage-theme="dark-venue">         (default if unset)
+ *   <html data-stage-theme="dark-venue">         (colors apply ONLY when set)
  *   button { background: var(--bmp-accent); min-height: var(--bmp-touch-min); }
+ *
+ * SIDE-EFFECT-FREE BY DESIGN: bare :root defines only mode-INDEPENDENT tokens
+ * (geometry, type scale, motion). Color tokens + color-scheme apply ONLY under
+ * an explicit [data-stage-theme="…"], so an app can `import`/`<link>` this file
+ * with zero visual change until it opts a subtree into a lighting mode. This is
+ * what lets the light desk-workbench app (chord-sheet-maker) load the same file
+ * as the dark stage apps without a regression.
  *
  * Tailwind (Phase 2+): map these into `@theme { --color-accent: var(--bmp-accent) }`.
  * ---------------------------------------------------------------------------
@@ -57,10 +64,10 @@
   --bmp-transition: 120ms ease;
 }
 
-/* ===== Mode: dark-venue (DEFAULT) ========================================= *
+/* ===== Mode: dark-venue ==================================================== *
  * Dim club / low ambient light. Dark surface, bright-but-not-blinding text.
- * Default so an app that forgets to set data-stage-theme still looks right.   */
-:root,
+ * Apply by setting [data-stage-theme="dark-venue"] (NOT applied to bare :root,
+ * so importing the file never forces dark on a light app).                    */
 [data-stage-theme="dark-venue"] {
   --bmp-bg:            #0b0b0f;
   --bmp-surface:       #17171d;
