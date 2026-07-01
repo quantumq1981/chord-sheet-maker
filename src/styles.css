@@ -17,11 +17,14 @@
   --border-muted: #f1f5f9;
   --border-strong: #cbd5e1;
 
-  /* Brand — blue */
-  --brand:        #2563eb;
-  --brand-dark:   #1d4ed8;
-  --brand-light:  #eff6ff;
-  --brand-border: #bfdbfe;
+  /* Brand — BandMgtPro family orange (was blue). Unified across the app family.
+     --brand uses the deep --bmp-accent-ink so it stays ≥4.5:1 on this light UI
+     (both as text and as a fill with white text); tints recolored to match.
+     Drives all 39 var(--brand*) usages (.btn-primary, links, analytics, etc.). */
+  --brand:        var(--bmp-accent-ink);
+  --brand-dark:   #93290b;
+  --brand-light:  #fff1ec;
+  --brand-border: #f3b39c;
 
   /* Accent — violet (sections/chart) */
   --accent:       #7c3aed;
