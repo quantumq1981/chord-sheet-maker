@@ -25,6 +25,7 @@ import {
   isPowerTabFormat,
   asSourceFormat,
 } from './ingest/sniffFormat';
+import type { SourceFormat } from './ingest/sniffFormat';
 import { ptbToVexTabScore, ptbTuningToNoteNames } from './converters/powerTabConverter';
 import {
   gpScoreToChordPro,
@@ -614,6 +615,14 @@ export default function App() {
   /** Raw source text of the loaded chart — used by Stage Mode chord stripping. */
   const [chartSourceText, setChartSourceText] = useState('');
   const [stageModeOpen, setStageModeOpen] = useState(false);
+  /**
+   * Lyric source fed to Stage Mode, populated on-open by `openStageMode()` so
+   * notation/AlphaTab modes can reuse the existing chord-stripping engine.
+   * ChordPro `[Chord]lyric` is the shared lingua franca.
+   */
+  const [stageLyricsSource, setStageLyricsSource] = useState<
+    { text: string; format: SourceFormat } | null
+  >(null);
 
   // ── Tablature mode state ──
   const [tabTuning, setTabTuning] = useState<string[]>(TUNING_PRESETS['Standard (EADGBe)']);
@@ -875,6 +884,7 @@ export default function App() {
     setChartDocument(null);
     setChartSourceText('');
     setStageModeOpen(false);
+    setStageLyricsSource(null);
     setSongModel(null);
     setTransposeSemitones(0);
     setTransposeWarnings([]);
@@ -1720,6 +1730,39 @@ else{window.addEventListener('load',go,{once:true});}
     }
   }, [chordProUi, loadedFilename, loadedXmlText, showExportError, showExportSuccess]);
 
+  // ── Stage Mode opener (chord-free lyric sheet) ──
+  // Resolves the current mode to a ChordPro / text source Stage Mode can
+  // strip. MusicXML/GP have no ChordPro until we ask the converter for one,
+  // so we run `convertMusicXmlToChordPro` in `lyrics-inline` mode on demand.
+  const openStageMode = useCallback(async () => {
+    try {
+      if (appMode === 'chord-chart' && chartSourceText) {
+        setStageLyricsSource({
+          text: chartSourceText,
+          format: chartDocument?.sourceFormat ?? 'chordpro',
+        });
+      } else if (appMode === 'alphatab' && gpChordProText) {
+        setStageLyricsSource({ text: gpChordProText, format: 'chordpro' });
+      } else if ((appMode === 'notation' || appMode === 'tablature' || appMode === 'alphatab') && loadedXmlText) {
+        const options = {
+          ...buildChordProOptionsFromUI(chordProUi),
+          formatMode: 'lyrics-inline' as const,
+        };
+        const result = await convertMusicXmlToChordPro(
+          { filename: loadedFilename, xmlText: loadedXmlText },
+          options,
+        );
+        setStageLyricsSource({ text: result.chordPro, format: 'chordpro' });
+      } else {
+        showExportError('Load a chart or score before opening Stage Mode.');
+        return;
+      }
+      setStageModeOpen(true);
+    } catch (error) {
+      showExportError(`Stage Mode failed to extract lyrics: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [appMode, chartSourceText, chartDocument, gpChordProText, loadedXmlText, loadedFilename, chordProUi, showExportError]);
+
   // ── Open in Chord Sheet Maker Pro (same-origin CSMPN handoff) ──
   // Serializes the current (transposed) chart into a versioned envelope, stores
   // it under a shared localStorage key, and navigates to Pro — which reads the
@@ -2341,7 +2384,7 @@ else{window.addEventListener('load',go,{once:true});}
                   <button type="button" onClick={() => void exportChordChartPdf()}>
                     Generate PDF
                   </button>
-                  <button type="button" className="btn-stage" onClick={() => setStageModeOpen(true)}>
+                  <button type="button" className="btn-stage" onClick={() => void openStageMode()}>
                     🎤 Stage Mode
                   </button>
                 </div>
@@ -2652,6 +2695,10 @@ else{window.addEventListener('load',go,{once:true});}
                     title="Best quality. Opens the print dialog — on iPhone/iPad choose Save to Files to keep a sharp, vector PDF.">
                     Print / Save as PDF
                   </button>
+                  <button type="button" className="btn-stage" onClick={() => void openStageMode()} disabled={!canExportNotation}
+                    title="Strip all chords and render a large, dark-background lyrics-only sheet for live use (PDF / auto-scroll HTML). Only shows lyrics present in the MusicXML source.">
+                    🎤 Stage Mode
+                  </button>
                   <button type="button" onClick={() => void exportPdf()} disabled={!canExportNotation}
                     title="One-tap raster PDF download — handy on desktop.">
                     Quick PDF
@@ -2916,6 +2963,10 @@ else{window.addEventListener('load',go,{once:true});}
                   <button type="button" className="btn-primary" onClick={printAlphaTab} disabled={!canExportAlphaTab}>
                     Print
                   </button>
+                  <button type="button" className="btn-stage" onClick={() => void openStageMode()} disabled={!canExportAlphaTab}
+                    title="Strip all chords and render a large, dark-background lyrics-only sheet for live use. Requires lyrics in the Guitar Pro track or MusicXML source.">
+                    🎤 Stage Mode
+                  </button>
                   <button type="button" onClick={() => void exportAlphaTabPdf()} disabled={!canExportAlphaTab}>
                     Generate PDF
                   </button>
@@ -2974,12 +3025,12 @@ else{window.addEventListener('load',go,{once:true});}
         </aside>
       </main>
 
-      {appMode === 'chord-chart' && (
+      {stageLyricsSource && (
         <StageModeModal
           open={stageModeOpen}
           onClose={() => setStageModeOpen(false)}
-          sourceText={chartSourceText}
-          sourceFormat={chartDocument?.sourceFormat ?? 'chordpro'}
+          sourceText={stageLyricsSource.text}
+          sourceFormat={stageLyricsSource.format}
           transposeSteps={transposeSemitones}
           enharmonicPreference={transposeEnharmonic}
           baseFilename={baseName}
