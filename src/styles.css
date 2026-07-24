@@ -1,21 +1,23 @@
 /* ─── Design tokens ────────────────────────────────────────────────────────── */
 :root {
-  /* Surfaces */
-  --bg:            #f1f5f9;
+  /* Surfaces — Family 1 "desk": warm manuscript ground with white workbench
+     panels (was Slate #f1f5f9). Not the AI-default Slate/cream; the burnt-orange
+     family brand carries the accent. White surfaces keep notation/print clean. */
+  --bg:            #e8e4d8;
   --surface:       #ffffff;
-  --surface-hover: #f8fafc;
-  --surface-muted: #f8fafc;
+  --surface-hover: #f3efe4;
+  --surface-muted: #f1ece0;
 
-  /* Text */
-  --text:         #0f172a;
-  --text-muted:   #475569;
-  --text-subtle:  #94a3b8;
+  /* Text — warm ink, not Slate near-black */
+  --text:         #20201c;
+  --text-muted:   #6c6656;
+  --text-subtle:  #9a927f;
   --text-inverse: #ffffff;
 
-  /* Borders */
-  --border:       #e2e8f0;
-  --border-muted: #f1f5f9;
-  --border-strong: #cbd5e1;
+  /* Borders — warm hairlines */
+  --border:       #d8cfba;
+  --border-muted: #e6dfce;
+  --border-strong: #c3b79b;
 
   /* Brand — BandMgtPro family orange (was blue). Unified across the app family.
      --brand uses the deep --bmp-accent-ink so it stays ≥4.5:1 on this light UI
@@ -212,7 +214,7 @@ button {
 
 button:hover {
   background: var(--surface-hover);
-  border-color: #94a3b8;
+  border-color: var(--border-strong);
 }
 
 button:focus-visible {
@@ -540,7 +542,7 @@ select:disabled {
 .export-hint {
   margin: calc(-1 * var(--space-2)) 0 var(--space-3);
   font-size: 0.78rem;
-  color: var(--muted, #64748b);
+  color: var(--text-muted);
   line-height: 1.35;
 }
 
