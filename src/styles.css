@@ -19,11 +19,11 @@
   --border-muted: #e6dfce;
   --border-strong: #c3b79b;
 
-  /* Brand — BandMgtPro family orange (was blue). Unified across the app family.
-     --brand uses the deep --bmp-accent-ink so it stays ≥4.5:1 on this light UI
-     (both as text and as a fill with white text); tints recolored to match.
+  /* Brand — deep burnt orange (was blue), shared with chord-sheet-maker-pro.
+     Stays ≥4.5:1 on this light UI (both as text and as a fill with white text);
+     tints recolored to match.
      Drives all 39 var(--brand*) usages (.btn-primary, links, analytics, etc.). */
-  --brand:        var(--bmp-accent-ink);
+  --brand:        #b8350f;
   --brand-dark:   #93290b;
   --brand-light:  #fff1ec;
   --brand-border: #f3b39c;
