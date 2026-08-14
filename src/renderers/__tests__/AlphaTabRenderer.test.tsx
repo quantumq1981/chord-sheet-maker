@@ -60,6 +60,7 @@ vi.mock('@coderline/alphatab', () => {
     LayoutMode: { Page: 0, Horizontal: 1 },
     StaveProfile: { Default: 0, ScoreTab: 1, Score: 2, Tab: 3 },
     DisplaySettings: Settings,
+    model: { Voice: undefined },
     importer: {
       ScoreLoader: {
         loadScoreFromBytes: loadScoreFromBytesMock,

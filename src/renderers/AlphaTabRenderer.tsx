@@ -15,6 +15,30 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import type { AlphaTabUiSettings } from '../types/alphatab';
 
+// Monkey-patch Voice._chain to guard against bars with mismatched voice counts.
+// AlphaTab's _chain assumes nextBar.voices[this.index] exists, but GP7/8 files
+// with heterogeneous track layouts can have bars with fewer voices than the
+// current voice index, causing a "Cannot read properties of undefined" crash
+// during Score.finish().
+(function patchVoiceChain() {
+  const Voice = alphaTab.model?.Voice;
+  if (!Voice?.prototype) return;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const proto = Voice.prototype as any;
+  const orig = proto._chain;
+  if (typeof orig !== 'function') return;
+  proto._chain = function (beat: unknown, sharedDataBag: unknown = null) {
+    try {
+      return orig.call(this, beat, sharedDataBag);
+    } catch {
+      // Swallow the crash — the beat simply won't be chained to the next bar's
+      // voice, which is harmless (it only affects cross-bar beaming/ties).
+      const b = beat as { chain?: (bag: unknown) => void };
+      if (typeof b?.chain === 'function') b.chain(sharedDataBag);
+    }
+  };
+})();
+
 interface Props {
   /** MusicXML text — used when fileBytes is not provided. */
   xmlText?: string;
@@ -217,7 +241,11 @@ export default function AlphaTabRenderer({
         score.stylesheet.hideEmptyStavesInFirstSystem = false;
         score.stylesheet.barNumberDisplay = alphaTab.model.BarNumberDisplay.Hide;
       }
-      onScoreLoadedRef.current?.(score);
+      try {
+        onScoreLoadedRef.current?.(score);
+      } catch (cbErr) {
+        console.warn('[AlphaTab] onScoreLoaded callback error (non-fatal):', cbErr);
+      }
 
       // If the file has no guitar string data (e.g. piano MusicXML), AlphaTab will
       // crash with "l.staves" when trying to lay out a tab stave. Detect this and
