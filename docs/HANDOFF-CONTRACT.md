@@ -7,6 +7,8 @@ Lets a sender app push the current chart to **`chord-sheet-maker-pro`** with one
   - `tab-translator-pro` — the **→ Chord Sheet Maker Pro** button in the Chart panel (`sendToPro()` in `TabDecoderPro.tsx`). `source: "tab-translator-pro"`. Tab Translator turns a tab/PDF/Guitar Pro/MusicXML/Power Tab file into a chord chart, exports it as Pro's native **CSMPN** (`scoreToCSMPN()`), and hands it over.
 - **Receiver:** `chord-sheet-maker-pro` — *implemented* (PR #288, in `index.html`'s boot path; status message is `source`-aware). Purely additive; runs only when explicitly invoked, so it cannot affect any existing Pro feature (PowerTab/.ptb, slash notation, hybrid, fake‑book, etc.).
 
+> **Channels (all same-origin `localStorage`, one-shot):** `csm:handoff:v1` chart → Pro (`?import=handoff`, optional `parts[]`) · `ttp:decode:v1` raw file → Tab Translator Pro (`?import=decode`) · `csm:lyrics:v1` lyrics → Pro Perform Lyrics (`?import=lyrics`). CSMPN may carry a `Tempo Map:` header.
+
 > The `source` field is informational only — the receiver keys off `formats` (priority `csmpn → chordpro → musicxml`), so **any** app that writes a valid v1 envelope and opens Pro with `?import=handoff` is interoperable. New senders just pick a unique `source` string.
 
 ---
@@ -79,7 +81,7 @@ Add this **once**, early in Pro's boot (after `parseCSMPN` / the import pipeline
     }
     if (csmpn) {
       var srcEl = document.getElementById('source');    // Pro's source textarea id
-      if (srcEl) { srcEl.value = (typeof filterLyricsLines === 'function') ? filterLyricsLines(csmpn) : csmpn; }
+      if (srcEl) { srcEl.value = csmpn; }               // full source; the preview hides lyrics itself
       if (typeof extractHeaderFromText === 'function') extractHeaderFromText(srcEl ? srcEl.value : csmpn);
       if (typeof updatePreview === 'function') updatePreview();  // re-render
     }
@@ -98,9 +100,92 @@ Add this **once**, early in Pro's boot (after `parseCSMPN` / the import pipeline
 - **Preview refresh:** `updatePreview()` (`renderer.js`).
 - **ChordPro import:** `importChordPro(text)` (`importPipeline.js`) — **returns a CSMPN string**; set it as the source value.
 - **MusicXML import:** `importMusicXML(xml)` (`importPipeline.js`) — **returns a `SongModel`**, not editor text. Call `song.toCSMPN({ barsPerRow })` to get the CSMPN string. (Do **not** rely on `importMusicXML()` populating the editor — it doesn't.)
-- Pro's file-import handlers load CSMPN via `filterLyricsLines()` → `source.value` → `extractHeaderFromText()` → `updatePreview()`; the receiver mirrors that flow for every format.
+- Pro's file-import handlers load CSMPN via `source.value` → `extractHeaderFromText()` → `updatePreview()`; the receiver mirrors that flow for every format. (Since 2026-08-18 Pro stores the **unfiltered** CSMPN, so `; lyric` lines survive for Lyrics / Perform Lyrics; `updatePreview()` hides them when *Include lyrics* is off. Earlier versions of this snippet ran `filterLyricsLines()` first, which threw the lyrics away.)
 - If the CSMPN path should also run `expandCSMPNRepeats` or seed Fake Book settings, do that here — but keep it inside this isolated IIFE.
 - This adds an entry point and modifies **no** existing trigger, so PowerTab and every other feature are unaffected.
+
+---
+
+## Optional `parts[]` — one chart per instrument (2026-10-25)
+
+An additive field on the **same** `v:1` envelope. A sender charting several instruments from one
+recording (Tab Translator Pro's stems panel → **→ Chord Sheet Maker Pro (all parts)**) adds:
+
+```json
+{
+  "v": 1,
+  "source": "tab-translator-pro",
+  "title": "Song Title",
+  "formats": { "csmpn": "…the band chart…" },
+  "parts": [
+    { "name": "Guitar", "role": "other", "formats": { "csmpn": "Title: Song Title — Guitar\n…" } },
+    { "name": "Bass",   "role": "bass",  "formats": { "csmpn": "Title: Song Title — Bass\n…" } }
+  ]
+}
+```
+
+- **`formats` stays the primary chart** (the band chart). A receiver that doesn't know `parts`
+  loads that chart and ignores the rest, so the envelope version does **not** change.
+- Each part: `name` (display), `role` (informational — `other`/`guitar`/`bass`/`vocals`/`piano`…),
+  `formats.csmpn` (required; a part without it is skipped). At most **16** parts are read.
+- Every part is charted on the **same beat grid and tempo**, so bar numbers line up across parts.
+- **Receiver (implemented):** `chord-sheet-maker-pro` `handoffParts.js` (`window.HandoffParts`,
+  pure): `normalizeParts(env)` validates; `mergePartsIntoLibrary(library, parts)` upserts each part
+  into the song library by its CSMPN `Title:` line (else `"<title> — <name>"`), replacing an entry
+  with the same title. `consumeCsmHandoff` runs it only **after** the primary chart has loaded and
+  lists the saved parts in the status line. There is no part switcher yet: parts are separate
+  library songs, one **Load** away.
+
+---
+
+## CSMPN `Tempo Map:` header (2026-10-25)
+
+Charts made from a recording may carry a tempo that moves. The sender writes the usual `Tempo:`
+line (the opening tempo) **plus** a map:
+
+```
+Tempo: 117.6
+Tempo Map: 1=117.6 9=119.2 17=118.4
+```
+
+- `bar=bpm` pairs (♩ per minute, floats allowed), space-separated, in bar order; each change takes
+  effect at the **start** of that bar (changes sit on bar lines). Bar 1 is the first bar of the chart.
+- It is a header line, never a bar. Readers that don't know it should ignore it like any unknown
+  `Key: value` header.
+- **Writer:** Tab Translator Pro (`scoreToCSMPN`), only when the performance tempo actually changes.
+- **Reader:** Chord Sheet Maker Pro — `parseTempoMap` (`csmpnParser.js` + `src/parsers/csmpnParser.ts`)
+  → `doc.tempoMap`; playback (`audioPlayback.js`) and MusicXML export (`renderer.js`, `<sound tempo>`)
+  follow it bar by bar.
+- **chord-sheet-maker** writes CSMPN (`buildCsmpnFakeBookSource`, `buildCsmpnFromChartDocument`) but
+  never reads it, so it needs no change; its own charts carry a single `Tempo:`.
+
+---
+
+## Lyrics handoff — `csm:lyrics:v1` (→ Pro Perform Lyrics, 2026-09-16)
+
+A third same-origin channel: a clean **lyrics-only** sheet for Pro's auto-scrolling stage view.
+
+- **Storage key:** `localStorage["csm:lyrics:v1"]`
+- **Trigger param:** Pro is opened at `…/chord-sheet-maker-pro/?import=lyrics`
+- **Envelope (JSON):**
+  ```json
+  {
+    "v": 1,
+    "source": "tab-translator-pro",
+    "createdAt": "<ISO-8601>",
+    "title": "Song Title",
+    "artist": "Artist",
+    "lyrics": "VERSE 1\nfirst line\nsecond line\n\nCHORUS\n…"
+  }
+  ```
+- `lyrics` holds section headers (UPPERCASE) and stanzas only, blank line between stanzas and
+  sections, **no title line** — `title` / `artist` ride as their own fields.
+- **Sender (implemented):** `tab-translator-pro` Lyrics → Import → **🎤 Perform on Chord Sheet Maker
+  Pro** (`sendToPerform` in `LyricsImport`, after it strips the chords from a chords-over-lyrics or
+  ChordPro sheet).
+- **Receiver (implemented):** `chord-sheet-maker-pro` `consumeLyricsHandoff` in `index.html`: reads
+  and clears the key once, strips the query param, opens Perform Lyrics seeded with the words, title
+  and artist. Wrapped in try/catch.
 
 ---
 
@@ -141,4 +226,4 @@ The handoff is **bidirectional**. A finishing app can hand a *raw tab file* (not
 ---
 
 ## Versioning
-The key is suffixed `:v1` and the envelope carries `v: 1`. Any breaking change to the schema bumps both (`csm:handoff:v2` / `ttp:decode:v2`), so an old sender and new receiver never silently misinterpret a payload.
+The key is suffixed `:v1` and the envelope carries `v: 1`. Any breaking change to the schema bumps both (`csm:handoff:v2` / `ttp:decode:v2` / `csm:lyrics:v2`), so an old sender and new receiver never silently misinterpret a payload. **Additive, optional fields** that an old receiver can safely ignore (`parts[]`, the `Tempo Map:` header) do **not** bump the version.
