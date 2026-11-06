@@ -1816,6 +1816,33 @@ else{window.addEventListener('load',go,{once:true});}
     }
   }, [appMode, chartDocument, loadedXmlText, gpChordProText, loadedFilename, transposeSemitones, transposeEnharmonic, chordProUi, showExportError, showExportSuccess]);
 
+  // ── Link a recording in Tab Translator Pro (reverse handoff `ttp:decode:v1`, intent "link") ──
+  // Sends the score file itself (the Guitar Pro bytes, or the untransposed MusicXML) to Tab Translator
+  // Pro, which opens it and then its Audio panel with the score attached: the user adds a recording
+  // and gets the chords read from the audio WITH the score as evidence, on the recording's tempo,
+  // with every disagreement listed. Contract: docs/HANDOFF-CONTRACT.md (`intent` is optional).
+  const linkInTabTranslator = useCallback(() => {
+    try {
+      let bytes: Uint8Array | null = null;
+      let filename = loadedFilename || 'score';
+      if (gpFileBuffer) bytes = new Uint8Array(gpFileBuffer);
+      else if (pristineXmlText) {
+        bytes = new TextEncoder().encode(pristineXmlText);
+        if (isMxl || !/\.(musicxml|xml)$/i.test(filename)) filename = filename.replace(/\.[^.]+$/, '') + '.musicxml';
+      }
+      if (!bytes) { showExportError('Load a MusicXML or Guitar Pro score first.'); return; }
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)));
+      const b64 = btoa(bin);
+      if (b64.length > 4_500_000) { showExportError('That score is too large to hand off (~3 MB max) — open it directly in Tab Translator Pro.'); return; }
+      localStorage.setItem('ttp:decode:v1', JSON.stringify({ v: 1, source: 'chord-sheet-maker', createdAt: new Date().toISOString(), filename, b64, intent: 'link' }));
+      showExportSuccess('Sent to Tab Translator Pro — add the recording there…');
+      window.location.assign(`${window.location.origin}/Tab-Translator-Pro/?import=decode`);
+    } catch (error) {
+      showExportError(`Link a recording failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [gpFileBuffer, pristineXmlText, isMxl, loadedFilename, showExportError, showExportSuccess]);
+
   const copyChordPro = useCallback(async (text: string) => {
     if (!text) { showExportError('Nothing to copy.'); return; }
     try {
@@ -2592,6 +2619,10 @@ else{window.addEventListener('load',go,{once:true});}
                     title="Send this score (as CSMPN) to Chord Sheet Maker Pro for fake-book finishing & performance.">
                     Open in Pro ↗
                   </button>
+                  <button type="button" onClick={linkInTabTranslator} disabled={!pristineXmlText}
+                    title="Have a recording of this song? Tab Translator Pro links it to this score: chords read from the audio with the score as evidence, bars on the recording's tempo, differences listed.">
+                    Link a recording ↗
+                  </button>
                   <button type="button" onClick={() => void copyChordPro(chordProText)} disabled={!chordProText}>
                     Copy
                   </button>
@@ -2917,6 +2948,10 @@ else{window.addEventListener('load',go,{once:true});}
                       onClick={loadGpAsChordChart}
                     >
                       View as Chord Chart
+                    </button>
+                    <button type="button" onClick={linkInTabTranslator}
+                      title="Have a recording of this song? Tab Translator Pro links it to this score: chords read from the audio with the score as evidence, bars on the recording's tempo, differences listed.">
+                      Link a recording ↗
                     </button>
                     <button
                       type="button"

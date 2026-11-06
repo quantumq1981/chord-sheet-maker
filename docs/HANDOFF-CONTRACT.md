@@ -7,7 +7,7 @@ Lets a sender app push the current chart to **`chord-sheet-maker-pro`** with one
   - `tab-translator-pro` — the **→ Chord Sheet Maker Pro** button in the Chart panel (`sendToPro()` in `TabDecoderPro.tsx`). `source: "tab-translator-pro"`. Tab Translator turns a tab/PDF/Guitar Pro/MusicXML/Power Tab file into a chord chart, exports it as Pro's native **CSMPN** (`scoreToCSMPN()`), and hands it over.
 - **Receiver:** `chord-sheet-maker-pro` — *implemented* (PR #288, in `index.html`'s boot path; status message is `source`-aware). Purely additive; runs only when explicitly invoked, so it cannot affect any existing Pro feature (PowerTab/.ptb, slash notation, hybrid, fake‑book, etc.).
 
-> **Channels (all same-origin `localStorage`, one-shot):** `csm:handoff:v1` chart → Pro (`?import=handoff`, optional `parts[]`) · `ttp:decode:v1` raw file → Tab Translator Pro (`?import=decode`) · `csm:lyrics:v1` lyrics → Pro Perform Lyrics (`?import=lyrics`). CSMPN may carry a `Tempo Map:` header.
+> **Channels (all same-origin `localStorage`, one-shot):** `csm:handoff:v1` chart → Pro (`?import=handoff`, optional `parts[]`) · `ttp:decode:v1` raw file → Tab Translator Pro (`?import=decode`, optional `intent: "link"`) · `csm:lyrics:v1` lyrics → Pro Perform Lyrics (`?import=lyrics`). CSMPN may carry a `Tempo Map:` header.
 
 > The `source` field is informational only — the receiver keys off `formats` (priority `csmpn → chordpro → musicxml`), so **any** app that writes a valid v1 envelope and opens Pro with `?import=handoff` is interoperable. New senders just pick a unique `source` string.
 
@@ -222,6 +222,26 @@ The handoff is **bidirectional**. A finishing app can hand a *raw tab file* (not
   (xml/GP mode) or the PDF pipeline (gated on PDF.js load). Lands on part 0; the user
   switches parts. Wrapped in try/catch; strips the query param.
 - Same versioning rule (`:v1` / `v:1`).
+
+### Optional `intent: "link"` — link a recording to this score (added 2026-11-06)
+
+```json
+{ "v": 1, "source": "chord-sheet-maker", "createdAt": "…", "filename": "song.gp", "b64": "…", "intent": "link" }
+```
+
+- **Meaning:** the sender wants a **recording** linked to the score it sends. Tab Translator opens
+  the score as usual (MusicXML / GP panel), keeps its bytes, then switches to its **Audio** panel
+  with the score attached (**📎 Link a score**) — the user uploads / records the song and the chords
+  are read from the audio **with the score as evidence**, the bars become the score's bars on the
+  recording's tempo map, the score's sections come along, and every place the recording plays
+  something else goes to the review list with the score's chord one tap away.
+- **Senders (implemented):** `chord-sheet-maker-pro` import menu **Link a score to a recording →
+  Tab Translator Pro ↗** (same file input + envelope as *Decode tab*, plus `intent`);
+  `chord-sheet-maker` **Link a recording ↗** (notation export row and the Guitar Pro panel — sends
+  the GP bytes, or the untransposed MusicXML as `.musicxml`).
+- **Receiver (implemented):** `tab-translator-pro` decode receiver — `intent === "link"` and the
+  score parsed with bars → `setLinkAsk` + Audio mode. A PDF, or no `intent`, behaves exactly as before.
+- **Additive:** an older Tab Translator ignores `intent` (it just opens the score), so `v` stays `1`.
 
 ---
 

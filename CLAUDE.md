@@ -19,7 +19,7 @@ The family is **recognize → normalize → finish**:
 
 **Shared rails:**
 - **CSMPN** (Chord Sheet Maker Pro Notation) is the canonical interchange text; ChordPro / MusicXML / CSML ride alongside.
-- **Same-origin localStorage handoff** — forward `csm:handoff:v1` (→ Pro, `?import=handoff`, optional `parts[]`), reverse `ttp:decode:v1` (→ Tab Translator, `?import=decode`) and lyrics `csm:lyrics:v1` (→ Pro Perform Lyrics, `?import=lyrics`). CSMPN may carry a `Tempo Map:` header. Versioned; any same-origin sender interoperable. Canonical spec: `docs/HANDOFF-CONTRACT.md` (lives in this repo).
+- **Same-origin localStorage handoff** — forward `csm:handoff:v1` (→ Pro, `?import=handoff`, optional `parts[]`), reverse `ttp:decode:v1` (→ Tab Translator, `?import=decode`, optional `intent: "link"` = open the score ready to link a recording) and lyrics `csm:lyrics:v1` (→ Pro Perform Lyrics, `?import=lyrics`). CSMPN may carry a `Tempo Map:` header. Versioned; any same-origin sender interoperable. Canonical spec: `docs/HANDOFF-CONTRACT.md` (lives in this repo).
 - All three are **client-side, iOS-Safari-first, zero-server** static web apps on GitHub Pages.
 
 **This repo is the family's converter workbench / lab (the "normalize" stage).**
@@ -523,3 +523,12 @@ code change in this repo was required.
 - **`csm:lyrics:v1`** (`?import=lyrics`) — Tab Translator Pro Lyrics Import → Pro Perform Lyrics.
 - The receiver snippet no longer runs `filterLyricsLines()` (Pro stores the full source since 2026-08-18).
 - Versioning rule: additive optional fields don't bump `:v1`.
+
+## "Link a recording ↗" → Tab Translator Pro (2026-11-06)
+
+`linkInTabTranslator` in `src/App.tsx` (buttons in the notation export row and the Guitar Pro
+"Extracted Chords" panel): sends the score file itself — the GP bytes, or the untransposed MusicXML
+(`pristineXmlText`, as `.musicxml`) — over `ttp:decode:v1` with the new optional `intent: "link"`
+(documented in `docs/HANDOFF-CONTRACT.md`; additive, `v` stays 1). Tab Translator Pro opens it and
+then its Audio panel with the score attached, so a recording of the song is read WITH the score
+(Tab-Translator-Pro `docs/SCORE-AUDIO-LINK.md`). ~3 MB base64 guard as in Pro's sender.
